@@ -12,6 +12,7 @@ struct IntersectionResult {
     bool has_intersection;
     parser::Vec3f hit_point;
 };
+
 class Ray {
 public:
     parser::Vec3f origin;
@@ -25,6 +26,45 @@ public:
         return formula;
     }
 };
+
+enum Type_of_Object {
+    TRIANGLE,
+    SPHERE,
+    MESH
+};
+
+
+struct HitData {
+    bool has_intersection;
+    Type_of_Object type;
+    int id;
+    float t;
+    parser::Vec3f hit_point;
+    parser::Vec3f normal;
+    int material_id;
+
+};
+
+
+
+
+float min(float a, float b)
+{
+    if(a < b)
+        return a;
+    else
+        return b;
+}
+
+float determinant(float a, float d, float g,
+                 float b, float e, float h,
+                 float c, float f, float i) {
+    return a * (e * i - h * f) 
+         - b * (d * i - g * f) 
+         + c * (d * h - g * e);
+}
+
+
 // we need surface normal calculator for tirangles and spheres
 parser::Vec3f substract_vec3f(parser::Vec3f v1, parser::Vec3f v2)
 {
@@ -174,8 +214,9 @@ Ray generate_ray(parser::Camera camera, int i, int j)
 parser::Vec3f closest_hit(Ray ray, parser::Scene scene)
 {
     
-    IntersectionResult triangle_result = closest_hit_triangle(ray, scene);
+    /* IntersectionResult triangle_result = closest_hit_triangle(ray, scene);
     IntersectionResult sphere_result = closest_hit_sphere(ray, scene);
+    parser::Vec3f min_hit_point;
 
     // Compare the distances and return the closer hit point
     
@@ -184,7 +225,7 @@ parser::Vec3f closest_hit(Ray ray, parser::Scene scene)
         float dist_sphere = vector_magnitude(substract_vec3f(ray.origin, sphere_result.hit_point));
     
 
-        return dist_triangle < dist_sphere ? triangle_result.hit_point : sphere_result.hit_point;
+        min_hit_point = dist_triangle < dist_sphere ? triangle_result.hit_point : sphere_result.hit_point;
     }
     else if ( sphere_result.has_intersection ) {
         return sphere_result.hit_point;
@@ -192,69 +233,81 @@ parser::Vec3f closest_hit(Ray ray, parser::Scene scene)
     else 
     {
         return triangle_result.hit_point;
-    }
+    } */
 }
 
-IntersectionResult closest_hit_triangle(Ray ray, parser::Scene scene)
+
+
+
+HitData hit_triangle(Ray ray, parser::Scene scene, parser::Triangle triangle)
 {
-    parser::Vec3f closest_hit_point;
+    parser::Vec3f hit_point;
 
-    float closest_hit_t = pos_inf;
+    parser::Vec3f v0 = scene.vertex_data[triangle.indices.v0_id - 1];
+    parser::Vec3f v1 = scene.vertex_data[triangle.indices.v1_id - 1];
+    parser::Vec3f v2 = scene.vertex_data[triangle.indices.v2_id - 1];
 
-    // for each triangle
-    for(int i=0; i<scene.triangles.size(); i++)
+    parser::Vec3f triangle_normal = triangle_unitnormal_calc(v0, v1, v2);
+
+    // Check if the triangle is backface of the camera
+    if(!backface_of_camera(ray.origin, ray.direction, triangle_normal))
     {
-        parser::Triangle triangle = scene.triangles[i];
-        parser::Vec3f v0 = scene.vertex_data[triangle.indices.v0_id-1];
-        parser::Vec3f v1 = scene.vertex_data[triangle.indices.v1_id-1];
-        parser::Vec3f v2 = scene.vertex_data[triangle.indices.v2_id-1];
+        parser::Vec3f direction = ray.direction;
+        // a = v0
+        parser::Vec3f v0_v1 = substract_vec3f(v0, v1); // v0-1
+        parser::Vec3f v0_v2 = substract_vec3f(v0, v2); // v0-2
+        parser::Vec3f v0_O = substract_vec3f(v0, ray.origin); // v0-Origin
 
-        parser::Vec3f triangle_normal = triangle_unitnormal_calc(v0, v1, v2);
-
-        // check if the triangle is backface of the camera
-        if(!backface_of_camera(ray.origin, ray.direction, triangle_normal))
+        // Calculate determinant
+        float detA = determinant(v0_v1.x, v0_v2.x, direction.x,
+                                    v0_v1.y, v0_v2.y, direction.y,
+                                    v0_v1.z, v0_v2.z, direction.z);
+        
+        
+        // determinant check
+        if(detA == 0)
         {
-            // calculate t
-            float direction_Tnormal_dot = dot_product_vec3f(ray.direction, triangle_normal);
-            // check if direction_Tnormal_dot is zero
-            if(direction_Tnormal_dot == 0)
-                continue;
-
-            parser::Vec3f v0_O = substract_vec3f(v0, ray.origin);
-            float t = dot_product_vec3f(v0_O, triangle_normal) / direction_Tnormal_dot;
-
-            // calculate hit point
-            parser::Vec3f hit_point = ray.at(t);
-
-            // check if the hit point is inside the triangle
-            parser::Vec3f v0v1 = substract_vec3f(v1, v0);
-            parser::Vec3f v0v2 = substract_vec3f(v2, v0);
-            parser::Vec3f v0p = substract_vec3f(hit_point, v0);
-
-            float dot00 = dot_product_vec3f(v0v2, v0v2);
-            float dot01 = dot_product_vec3f(v0v2, v0v1);
-            float dot02 = dot_product_vec3f(v0v2, v0p);
-            float dot11 = dot_product_vec3f(v0v1, v0v1);
-            float dot12 = dot_product_vec3f(v0v1, v0p);
-
-            float invDenom = 1 / (dot00 * dot11 - dot01 * dot01);
-            float u = (dot11 * dot02 - dot01 * dot12) * invDenom;
-            float v = (dot00 * dot12 - dot01 * dot02) * invDenom;
-            if(u >= 0 && v >= 0 && u + v <= 1)
-            {
-                if(t < closest_hit_t)
-                {
-                    closest_hit_t = t;
-                    closest_hit_point = hit_point;
-                }
-            }
+            HitData hit_data = {false, TRIANGLE, 0 , pos_inf, {}, {}, triangle.material_id};
+            return hit_data;
         }
-    }
-    if (closest_hit_t == pos_inf) {
-        return {false,{}};  // or another way to indicate no intersection
-    }
+        // Calculate t
+        float t = determinant(v0_v1.x, v0_v2.x, v0_O.x,
+                                v0_v1.y, v0_v2.y, v0_O.y,
+                                v0_v1.z, v0_v2.z, v0_O.z) / detA;
 
-    return {true, closest_hit_point};
+        if(t < 0)
+        {
+            HitData hit_data = {false, TRIANGLE, 0 , pos_inf, {}, {}, triangle.material_id};
+            return hit_data;
+        }
+
+        // Calculate beta
+        float beta = determinant(v0_O.x, v0_v2.x, direction.x,
+                                    v0_O.y, v0_v2.y, direction.y,
+                                    v0_O.z, v0_v2.z, direction.z) / detA;
+        
+        // Calculate gamma
+        float gamma = determinant(v0_v1.x, v0_O.x, direction.x,
+                                    v0_v1.y, v0_O.y, direction.y,
+                                    v0_v1.z, v0_O.z, direction.z) / detA;
+        
+        
+
+        // Check if the intersection is inside the triangle
+        if(beta < 0 || gamma < 0 || beta + gamma > 1)
+        {
+            HitData hit_data = {false, TRIANGLE, 0 , pos_inf, {}, {}, triangle.material_id};
+            return hit_data;
+        }
+
+        return {true, TRIANGLE, 0, t, ray.at(t), triangle_normal, triangle.material_id};
+    }
+    else
+    {
+        HitData hit_data = {false, TRIANGLE, 0 , pos_inf, {}, {}, triangle.material_id};
+        return hit_data;
+    }
+ 
 }
 
 IntersectionResult closest_hit_sphere(Ray ray, parser::Scene scene)
@@ -269,28 +322,46 @@ IntersectionResult closest_hit_sphere(Ray ray, parser::Scene scene)
         parser::Vec3f center = scene.vertex_data[sphere.center_vertex_id-1];
         float radius = sphere.radius;
 
-        // calculate t
-        parser::Vec3f center_O = substract_vec3f(center, ray.origin);
-        float t = dot_product_vec3f(center_O, ray.direction);
+        // d is the ray direction
+        parser::Vec3f d = ray.direction;
 
-        // calculate hit point
-        parser::Vec3f hit_point = ray.at(t);
+        // o-c is center_O in your code
+        parser::Vec3f center_O = substract_vec3f(ray.origin, center); // o-c
 
-        // check if the hit point is inside the sphere
-        float distance = vector_magnitude(substract_vec3f(hit_point, center));
-        if(distance <= radius)
+        // Calculate dot(d, o-c)
+        float dot_d_centerO = dot_product_vec3f(d, center_O); 
+
+        // Calculate dot(o-c, o-c)
+        float dot_centerO_centerO = dot_product_vec3f(center_O, center_O);
+
+        // Calculate dot(d, d)
+        float dot_d_d = dot_product_vec3f(d, d);
+
+        // Calculate discriminant inside the square root
+        float discriminant = dot_d_centerO * dot_d_centerO - dot_d_d * (dot_centerO_centerO - radius * radius); // (d.(o-c))^2 - (d.d)((o-c).(o-c) - r^2)
+
+        // If discriminant is negative, the ray doesn't intersect the sphere
+        if (discriminant < 0) {
+            // Handle this case
+            continue;  // or whatever is appropriate in your context
+        }
+
+        // Calculate the two possible values for t (t1 and t2)
+        float t1 = (-dot_d_centerO - sqrt(discriminant)) / dot_d_d;
+        float t2 = (-dot_d_centerO + sqrt(discriminant)) / dot_d_d;
+
+        if((t1 > 0 && t2 > 0) || t1 == t2)
         {
-            if(t < closest_hit_t)
-            {
-                closest_hit_t = t;
-                closest_hit_point = hit_point;
-            }
+            closest_hit_t = min( min(t1,t2) ,closest_hit_t); 
+                
         }
     }
 
     if (closest_hit_t == pos_inf) {
         return{false, {}};  // or another way to indicate no intersection
     }
+    
+    closest_hit_point = ray.at(closest_hit_t);  
 
     return {true, closest_hit_point};
 
