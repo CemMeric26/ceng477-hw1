@@ -7,7 +7,11 @@ typedef unsigned char RGB[3];
 
 
 RGB background_color;
-
+float pos_inf = std::numeric_limits<float>::infinity();
+struct IntersectionResult {
+    bool has_intersection;
+    parser::Vec3f hit_point;
+};
 class Ray {
 public:
     parser::Vec3f origin;
@@ -169,9 +173,34 @@ Ray generate_ray(parser::Camera camera, int i, int j)
 // we should calculate the closes hit of the ray with the scene
 parser::Vec3f closest_hit(Ray ray, parser::Scene scene)
 {
-    double pos_inf = std::numeric_limits<double>::infinity();
+    
+    IntersectionResult triangle_result = closest_hit_triangle(ray, scene);
+    IntersectionResult sphere_result = closest_hit_sphere(ray, scene);
+
+    // Compare the distances and return the closer hit point
+    
+    if (triangle_result.has_intersection && sphere_result.has_intersection ) {
+        float dist_triangle = vector_magnitude(substract_vec3f(ray.origin, triangle_result.hit_point));
+        float dist_sphere = vector_magnitude(substract_vec3f(ray.origin, sphere_result.hit_point));
+    
+
+        return dist_triangle < dist_sphere ? triangle_result.hit_point : sphere_result.hit_point;
+    }
+    else if ( sphere_result.has_intersection ) {
+        return sphere_result.hit_point;
+    }
+    else 
+    {
+        return triangle_result.hit_point;
+    }
+}
+
+IntersectionResult closest_hit_triangle(Ray ray, parser::Scene scene)
+{
     parser::Vec3f closest_hit_point;
+
     float closest_hit_t = pos_inf;
+
     // for each triangle
     for(int i=0; i<scene.triangles.size(); i++)
     {
@@ -179,22 +208,35 @@ parser::Vec3f closest_hit(Ray ray, parser::Scene scene)
         parser::Vec3f v0 = scene.vertex_data[triangle.indices.v0_id-1];
         parser::Vec3f v1 = scene.vertex_data[triangle.indices.v1_id-1];
         parser::Vec3f v2 = scene.vertex_data[triangle.indices.v2_id-1];
+
         parser::Vec3f triangle_normal = triangle_unitnormal_calc(v0, v1, v2);
-        if(backface_of_camera(ray.origin, ray.direction, triangle_normal))
+
+        // check if the triangle is backface of the camera
+        if(!backface_of_camera(ray.origin, ray.direction, triangle_normal))
         {
             // calculate t
-            float t = dot_product_vec3f(substract_vec3f(v0, ray.origin), triangle_normal) / dot_product_vec3f(ray.direction, triangle_normal);
+            float direction_Tnormal_dot = dot_product_vec3f(ray.direction, triangle_normal);
+            // check if direction_Tnormal_dot is zero
+            if(direction_Tnormal_dot == 0)
+                continue;
+
+            parser::Vec3f v0_O = substract_vec3f(v0, ray.origin);
+            float t = dot_product_vec3f(v0_O, triangle_normal) / direction_Tnormal_dot;
+
             // calculate hit point
             parser::Vec3f hit_point = ray.at(t);
+
             // check if the hit point is inside the triangle
             parser::Vec3f v0v1 = substract_vec3f(v1, v0);
             parser::Vec3f v0v2 = substract_vec3f(v2, v0);
             parser::Vec3f v0p = substract_vec3f(hit_point, v0);
+
             float dot00 = dot_product_vec3f(v0v2, v0v2);
             float dot01 = dot_product_vec3f(v0v2, v0v1);
             float dot02 = dot_product_vec3f(v0v2, v0p);
             float dot11 = dot_product_vec3f(v0v1, v0v1);
             float dot12 = dot_product_vec3f(v0v1, v0p);
+
             float invDenom = 1 / (dot00 * dot11 - dot01 * dot01);
             float u = (dot11 * dot02 - dot01 * dot12) * invDenom;
             float v = (dot00 * dot12 - dot01 * dot02) * invDenom;
@@ -208,6 +250,50 @@ parser::Vec3f closest_hit(Ray ray, parser::Scene scene)
             }
         }
     }
+    if (closest_hit_t == pos_inf) {
+        return {false,{}};  // or another way to indicate no intersection
+    }
+
+    return {true, closest_hit_point};
+}
+
+IntersectionResult closest_hit_sphere(Ray ray, parser::Scene scene)
+{
+    parser::Vec3f closest_hit_point;
+    float closest_hit_t = pos_inf;
+
+    // for each sphere
+    for(int i=0; i<scene.spheres.size(); i++)
+    {
+        parser::Sphere sphere = scene.spheres[i];
+        parser::Vec3f center = scene.vertex_data[sphere.center_vertex_id-1];
+        float radius = sphere.radius;
+
+        // calculate t
+        parser::Vec3f center_O = substract_vec3f(center, ray.origin);
+        float t = dot_product_vec3f(center_O, ray.direction);
+
+        // calculate hit point
+        parser::Vec3f hit_point = ray.at(t);
+
+        // check if the hit point is inside the sphere
+        float distance = vector_magnitude(substract_vec3f(hit_point, center));
+        if(distance <= radius)
+        {
+            if(t < closest_hit_t)
+            {
+                closest_hit_t = t;
+                closest_hit_point = hit_point;
+            }
+        }
+    }
+
+    if (closest_hit_t == pos_inf) {
+        return{false, {}};  // or another way to indicate no intersection
+    }
+
+    return {true, closest_hit_point};
+
 }
 
 void Main_raytrace_Computer(parser::Scene scene)
