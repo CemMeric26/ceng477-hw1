@@ -315,7 +315,7 @@ HitData closest_hit(Ray& ray, parser::Scene& scene)
 
 }
 
-HitData hit_triangle(Ray ray, parser::Scene& scene, parser::Triangle& triangle, int unique_id, parser::Vec3f triangle_normal)
+HitData hit_triangle(Ray& ray, parser::Scene& scene, parser::Triangle& triangle, int unique_id, parser::Vec3f triangle_normal)
 {
     parser::Vec3f hit_point;
 
@@ -387,7 +387,7 @@ HitData hit_triangle(Ray ray, parser::Scene& scene, parser::Triangle& triangle, 
  
 }
 
-HitData hit_sphere(Ray ray, parser::Scene& scene, parser::Sphere& sphere, int unique_id)
+HitData hit_sphere(Ray& ray, parser::Scene& scene, parser::Sphere& sphere, int unique_id)
 {
     parser::Vec3f hit_point;
     float hit_t = pos_inf;
@@ -433,7 +433,7 @@ HitData hit_sphere(Ray ray, parser::Scene& scene, parser::Sphere& sphere, int un
 
 }
 
-HitData hit_mesh(Ray ray, parser::Scene& scene, parser::Mesh& mesh, int mesh_index)
+HitData hit_mesh(Ray& ray, parser::Scene& scene, parser::Mesh& mesh, int mesh_index)
 {
     parser::Triangle mesh_triangle;
     int mesh_size = mesh.faces.size();
@@ -465,43 +465,72 @@ HitData hit_mesh(Ray ray, parser::Scene& scene, parser::Mesh& mesh, int mesh_ind
     HitData hit_data = {false, MESH, unique_id , pos_inf, {}, {}, mesh.material_id};
     return hit_data;
 }
-void Main_raytrace_Computer(parser::Scene& scene)
+
+parser::Vec3i compute_pixel_color(Ray& ray, HitData& hit_data, parser::Scene& scene, int recursion_depth)
 {
-    parser::Vec3i background_color = scene.background_color;
-    float shadow_ray_epsilon = scene.shadow_ray_epsilon;
-    int max_recursion_depth = scene.max_recursion_depth;
-    std::vector<parser::Camera> cameras = scene.cameras;
-    parser::Vec3f ambient_light = scene.ambient_light;
-    std::vector<parser::PointLight> point_lights = scene.point_lights;
-    std::vector<parser::Material> materials = scene.materials;
-    std::vector<parser::Vec3f> vertex_data = scene.vertex_data;
-    std::vector<parser::Mesh> meshes = scene.meshes;
-    std::vector<parser::Triangle> triangles = scene.triangles;
-    std::vector<parser::Sphere> spheres = scene.spheres;
-
-    // for each camera
-    for(int i=0; i<cameras.size(); i++)
+    if(recursion_depth > scene.max_recursion_depth)
     {
-        // to calculate the image we need followings:
-        // camera (cam_position, cam_gaze, up, nearplane, near_dist, image_w, image_h, image_name)
-        // lights (ambient, point_lights)
-        // materials (ambient, diffuse, specular, mirror, phong_exponent)
-        // vertex_data (vertex)
-        // meshes (material_id, faces)
-        // triangles (material_id, indices)
-        // spheres (material_id, center_vertex_id, radius)
-        //  compute_color() and apply_Shading() functions
+        return {0,0,0};
+    }
+    if(hit_data.has_intersection)
+    {
+        // find the color at the closest hit
 
-
-        parser::Camera camera = cameras[i];
-        std::vector<parser::PointLight> point_light = scene.point_lights ;
-
-
-
+        return apply_shading_to_pixel(recursion_depth, scene, hit_data, ray);
+    }
+    else if(recursion_depth == 0)
+    {
+        // no intersection for primary ray
+        return scene.background_color;
+    }
+    else
+    {
+        // avoid repeated addition of the background color for reflected rays
+        return {0,0,0};
     }
 
-    
 }
+
+parser::Vec3i apply_shading_to_pixel(int recursion_depth, parser::Scene& scene, HitData& hit_data, Ray& ray)
+{
+    parser::Vec3i pixel_color = { 255,   0,   0 };  // Red ;
+    return pixel_color;
+}
+
+void Main_raytrace_Computer(parser::Scene& scene)
+{
+    parser::Camera camera = scene.cameras[0];
+    int width = camera.image_width;
+    int height = camera.image_height;
+    unsigned char* image = new unsigned char [width * height * 3];
+
+    // for each pixel
+    for(int i=0; i<width; i++)
+    {
+        for(int j=0; j<height; j++)
+        {
+            Ray ray = generate_ray(camera, i, j);
+            HitData hit_data = closest_hit(ray, scene);
+            if(hit_data.has_intersection)
+            {
+                
+                parser::Vec3f pixel_color = { 255,   0,   0 };  // Red ;
+                image[(i + j * width) * 3 + 0] = pixel_color.x;
+                image[(i + j * width) * 3 + 1] = pixel_color.y;
+                image[(i + j * width) * 3 + 2] = pixel_color.z;
+            }
+            else
+            {
+                image[(i + j * width) * 3 + 0] = scene.background_color.x;
+                image[(i + j * width) * 3 + 1] = scene.background_color.y;
+                image[(i + j * width) * 3 + 2] = scene.background_color.z;
+            }
+        }
+    }
+      
+}
+
+
 
 void Child_raytrace_Computer()
 {
@@ -524,6 +553,7 @@ int main(int argc, char* argv[])
 
     global_meshTriangles_normals = all_meshTriangles_normals(scene);
     global_triangle_normals = tirangle_normals(scene);
+
 
     const RGB BAR_COLOR[8] =
     {
