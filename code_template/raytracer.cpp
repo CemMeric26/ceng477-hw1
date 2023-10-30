@@ -45,7 +45,8 @@ struct HitData {
 
 };
 
-
+std::vector<parser::Vec3f> global_triangle_normals;
+std::vector<std::vector<parser::Vec3f>> global_meshTriangles_normals;
 
 
 float min(float a, float b)
@@ -121,6 +122,53 @@ parser::Vec3f triangle_unitnormal_calc(parser::Vec3f v0, parser::Vec3f v1, parse
     return normal;
 }
 
+std::vector<parser::Vec3f> tirangle_normals(parser::Scene& scene)
+{
+    std::vector<parser::Vec3f> normals;
+    
+    int size_of_triangles = scene.triangles.size();
+
+    for(int i=0; i < size_of_triangles;i++)
+    {
+        parser::Triangle triangle = scene.triangles[i];
+        parser::Vec3f v0 = scene.vertex_data[triangle.indices.v0_id - 1];
+        parser::Vec3f v1 = scene.vertex_data[triangle.indices.v1_id - 1];
+        parser::Vec3f v2 = scene.vertex_data[triangle.indices.v2_id - 1];
+
+        parser::Vec3f triangle_normal = triangle_unitnormal_calc(v0, v1, v2);
+        normals.push_back(triangle_normal);
+    }
+
+    return normals;
+}
+
+std::vector<std::vector<parser::Vec3f>> all_meshTriangles_normals(parser::Scene& scene)
+{
+    std::vector<std::vector<parser::Vec3f>> all_meshTriangles_normals;
+    std::vector<parser::Vec3f> meshTriangles_normals;
+    int size_of_meshes = scene.meshes.size();
+
+    for(int i=0; i < size_of_meshes;i++)
+    {
+        parser::Mesh mesh = scene.meshes[i];
+        int size_of_mesh_triangles = mesh.faces.size();
+        for(int j=0; j < size_of_mesh_triangles;j++)
+        {
+            parser::Face triangle = mesh.faces[j];
+            parser::Vec3f v0 = scene.vertex_data[triangle.v0_id - 1];
+            parser::Vec3f v1 = scene.vertex_data[triangle.v1_id - 1];
+            parser::Vec3f v2 = scene.vertex_data[triangle.v2_id - 1];
+
+            parser::Vec3f triangle_normal = triangle_unitnormal_calc(v0, v1, v2);
+            meshTriangles_normals.push_back(triangle_normal);
+        }
+        all_meshTriangles_normals.push_back(meshTriangles_normals);
+        meshTriangles_normals.clear();
+    }
+
+    return all_meshTriangles_normals;
+}
+
 float vector_magnitude(parser::Vec3f v)
 {
     float magnitude = sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
@@ -186,7 +234,7 @@ bool backface_of_camera(parser::Vec3f camera_position, parser::Vec3f camera_gaze
     return Ray(camera.position, d);
 }
  */
-Ray generate_ray(parser::Camera camera, int i, int j)
+Ray generate_ray(parser::Camera& camera, int i, int j)
 {
     // right = cross_product(gaze, up)
     parser::Vec3f right = cross_product_vec3f(camera.gaze, camera.up);
@@ -211,35 +259,63 @@ Ray generate_ray(parser::Camera camera, int i, int j)
 }
 
 // we should calculate the closes hit of the ray with the scene
-parser::Vec3f closest_hit(Ray ray, parser::Scene scene)
+HitData closest_hit(Ray& ray, parser::Scene& scene)
 {
-    
-    /* IntersectionResult triangle_result = closest_hit_triangle(ray, scene);
-    IntersectionResult sphere_result = closest_hit_sphere(ray, scene);
-    parser::Vec3f min_hit_point;
+    // for each object in the scene
+    int size_of_triangles = scene.triangles.size();
+    int size_of_spheres = scene.spheres.size();
+    int size_of_meshes = scene.meshes.size();
 
-    // Compare the distances and return the closer hit point
-    
-    if (triangle_result.has_intersection && sphere_result.has_intersection ) {
-        float dist_triangle = vector_magnitude(substract_vec3f(ray.origin, triangle_result.hit_point));
-        float dist_sphere = vector_magnitude(substract_vec3f(ray.origin, sphere_result.hit_point));
-    
+    // we need to find the closest hit of the ray with the scene
+    float hit_t = pos_inf;
+    HitData closest_hit_data = {false, TRIANGLE, 0 , pos_inf, {}, {}, 0};
 
-        min_hit_point = dist_triangle < dist_sphere ? triangle_result.hit_point : sphere_result.hit_point;
-    }
-    else if ( sphere_result.has_intersection ) {
-        return sphere_result.hit_point;
-    }
-    else 
+    // for each triangle
+    for(int i=0; i<size_of_triangles; i++)
     {
-        return triangle_result.hit_point;
-    } */
+        parser::Triangle triangle = scene.triangles[i];
+        parser::Vec3f triangle_normal = global_triangle_normals[i];
+        HitData hit_data = hit_triangle(ray, scene, triangle, i, triangle_normal);
+        if(hit_data.has_intersection)
+        {
+            hit_t = min(hit_data.t, hit_t);
+            closest_hit_data = hit_data;
+        }
+    }
+    // for each sphere
+    for(int j=0; j<size_of_spheres; j++)
+    {
+        parser::Sphere sphere = scene.spheres[j];
+        HitData hit_data = hit_sphere(ray, scene, sphere, j);
+        if(hit_data.has_intersection)
+        {
+            hit_t = min(hit_data.t, hit_t);
+            if(hit_t == hit_data.t)
+            {
+                closest_hit_data = hit_data;
+            }
+        }
+    }
+    // for each mesh
+    for(int k=0; k<size_of_meshes; k++)
+    {
+        parser::Mesh mesh = scene.meshes[k];
+        HitData hit_data = hit_mesh(ray, scene, mesh, k);
+        if(hit_data.has_intersection)
+        {
+            hit_t = min(hit_data.t, hit_t);
+            if(hit_t == hit_data.t)
+            {
+                closest_hit_data = hit_data;
+            }
+        }
+    }
+
+    return closest_hit_data;
+
 }
 
-
-
-
-HitData hit_triangle(Ray ray, parser::Scene scene, parser::Triangle triangle)
+HitData hit_triangle(Ray ray, parser::Scene& scene, parser::Triangle& triangle, int unique_id, parser::Vec3f triangle_normal)
 {
     parser::Vec3f hit_point;
 
@@ -247,7 +323,8 @@ HitData hit_triangle(Ray ray, parser::Scene scene, parser::Triangle triangle)
     parser::Vec3f v1 = scene.vertex_data[triangle.indices.v1_id - 1];
     parser::Vec3f v2 = scene.vertex_data[triangle.indices.v2_id - 1];
 
-    parser::Vec3f triangle_normal = triangle_unitnormal_calc(v0, v1, v2);
+    //parser::Vec3f triangle_normal = triangle_unitnormal_calc(v0, v1, v2);
+    // parser::Vec3f triangle_normal = global_triangle_normals[triangle_normal_id];
 
     // Check if the triangle is backface of the camera
     if(!backface_of_camera(ray.origin, ray.direction, triangle_normal))
@@ -267,7 +344,7 @@ HitData hit_triangle(Ray ray, parser::Scene scene, parser::Triangle triangle)
         // determinant check
         if(detA == 0)
         {
-            HitData hit_data = {false, TRIANGLE, 0 , pos_inf, {}, {}, triangle.material_id};
+            HitData hit_data = {false, TRIANGLE, unique_id , pos_inf, {}, {}, triangle.material_id};
             return hit_data;
         }
         // Calculate t
@@ -277,7 +354,7 @@ HitData hit_triangle(Ray ray, parser::Scene scene, parser::Triangle triangle)
 
         if(t < 0)
         {
-            HitData hit_data = {false, TRIANGLE, 0 , pos_inf, {}, {}, triangle.material_id};
+            HitData hit_data = {false, TRIANGLE, unique_id , pos_inf, {}, {}, triangle.material_id};
             return hit_data;
         }
 
@@ -294,80 +371,101 @@ HitData hit_triangle(Ray ray, parser::Scene scene, parser::Triangle triangle)
         
 
         // Check if the intersection is inside the triangle
-        if(beta < 0 || gamma < 0 || beta + gamma > 1)
+        if(beta < 0 || gamma < 0 || beta + gamma > 1) // not inside the triangle
         {
-            HitData hit_data = {false, TRIANGLE, 0 , pos_inf, {}, {}, triangle.material_id};
+            HitData hit_data = {false, TRIANGLE, unique_id , pos_inf, {}, {}, triangle.material_id};
             return hit_data;
         }
 
-        return {true, TRIANGLE, 0, t, ray.at(t), triangle_normal, triangle.material_id};
+        return {true, TRIANGLE, unique_id, t, ray.at(t), triangle_normal, triangle.material_id};
     }
     else
     {
-        HitData hit_data = {false, TRIANGLE, 0 , pos_inf, {}, {}, triangle.material_id};
+        HitData hit_data = {false, TRIANGLE, unique_id , pos_inf, {}, {}, triangle.material_id};
         return hit_data;
     }
  
 }
 
-IntersectionResult closest_hit_sphere(Ray ray, parser::Scene scene)
+HitData hit_sphere(Ray ray, parser::Scene& scene, parser::Sphere& sphere, int unique_id)
 {
-    parser::Vec3f closest_hit_point;
-    float closest_hit_t = pos_inf;
+    parser::Vec3f hit_point;
+    float hit_t = pos_inf;
 
-    // for each sphere
-    for(int i=0; i<scene.spheres.size(); i++)
+    parser::Vec3f center = scene.vertex_data[sphere.center_vertex_id-1];
+    float radius = sphere.radius;
+
+    // d is the ray direction
+    parser::Vec3f d = ray.direction;
+
+    // o-c is center_O in your code
+    parser::Vec3f center_O = substract_vec3f(ray.origin, center); // o-c
+
+    // Calculate dot(d, o-c)
+    float dot_d_centerO = dot_product_vec3f(d, center_O); 
+
+    // Calculate dot(o-c, o-c)
+    float dot_centerO_centerO = dot_product_vec3f(center_O, center_O);
+
+    // Calculate dot(d, d)
+    float dot_d_d = dot_product_vec3f(d, d);
+
+    // Calculate discriminant inside the square root
+    float discriminant = dot_d_centerO * dot_d_centerO - dot_d_d * (dot_centerO_centerO - radius * radius); // (d.(o-c))^2 - (d.d)((o-c).(o-c) - r^2)
+
+    // If discriminant is negative, the ray doesn't intersect the sphere
+    if (discriminant < 0) {
+        // Handle this case
+        return {false, SPHERE, unique_id, pos_inf, {}, {}, sphere.material_id} ;  // or whatever is appropriate in your context
+    }
+
+    // Calculate the two possible values for t (t1 and t2)
+    float t1 = (-dot_d_centerO - sqrt(discriminant)) / dot_d_d;
+    float t2 = (-dot_d_centerO + sqrt(discriminant)) / dot_d_d;
+
+    if((t1 > 0 && t2 > 0) || t1 == t2)
     {
-        parser::Sphere sphere = scene.spheres[i];
-        parser::Vec3f center = scene.vertex_data[sphere.center_vertex_id-1];
-        float radius = sphere.radius;
-
-        // d is the ray direction
-        parser::Vec3f d = ray.direction;
-
-        // o-c is center_O in your code
-        parser::Vec3f center_O = substract_vec3f(ray.origin, center); // o-c
-
-        // Calculate dot(d, o-c)
-        float dot_d_centerO = dot_product_vec3f(d, center_O); 
-
-        // Calculate dot(o-c, o-c)
-        float dot_centerO_centerO = dot_product_vec3f(center_O, center_O);
-
-        // Calculate dot(d, d)
-        float dot_d_d = dot_product_vec3f(d, d);
-
-        // Calculate discriminant inside the square root
-        float discriminant = dot_d_centerO * dot_d_centerO - dot_d_d * (dot_centerO_centerO - radius * radius); // (d.(o-c))^2 - (d.d)((o-c).(o-c) - r^2)
-
-        // If discriminant is negative, the ray doesn't intersect the sphere
-        if (discriminant < 0) {
-            // Handle this case
-            continue;  // or whatever is appropriate in your context
-        }
-
-        // Calculate the two possible values for t (t1 and t2)
-        float t1 = (-dot_d_centerO - sqrt(discriminant)) / dot_d_d;
-        float t2 = (-dot_d_centerO + sqrt(discriminant)) / dot_d_d;
-
-        if((t1 > 0 && t2 > 0) || t1 == t2)
-        {
-            closest_hit_t = min( min(t1,t2) ,closest_hit_t); 
-                
-        }
+        hit_t = min( min(t1,t2) ,hit_t); 
+            
     }
 
-    if (closest_hit_t == pos_inf) {
-        return{false, {}};  // or another way to indicate no intersection
-    }
-    
-    closest_hit_point = ray.at(closest_hit_t);  
-
-    return {true, closest_hit_point};
+    return {true, SPHERE, unique_id, hit_t, ray.at(hit_t), {}, sphere.material_id};
 
 }
 
-void Main_raytrace_Computer(parser::Scene scene)
+HitData hit_mesh(Ray ray, parser::Scene& scene, parser::Mesh& mesh, int mesh_index)
+{
+    parser::Triangle mesh_triangle;
+    int mesh_size = mesh.faces.size();
+
+    float hit_t = pos_inf;
+    int unique_id=0;
+
+    for(int i=0; i<mesh_size; i++)
+    {
+        mesh_triangle.material_id = mesh.material_id;
+        mesh_triangle.indices = mesh.faces[i];
+        parser::Vec3f triangle_normal = global_meshTriangles_normals[mesh_index][i];
+
+        HitData hit_data = hit_triangle(ray, scene, mesh_triangle, i,triangle_normal);
+        if(hit_data.has_intersection)
+        {
+            hit_t = min(hit_data.t, hit_t);
+            if(hit_t == hit_data.t)
+            {
+                unique_id = i;
+            }
+        }
+    }
+    if(hit_t != pos_inf) // if there is a hit
+    {
+        return {true, MESH, unique_id, hit_t, ray.at(hit_t), {}, mesh.material_id};
+    }
+
+    HitData hit_data = {false, MESH, unique_id , pos_inf, {}, {}, mesh.material_id};
+    return hit_data;
+}
+void Main_raytrace_Computer(parser::Scene& scene)
 {
     parser::Vec3i background_color = scene.background_color;
     float shadow_ray_epsilon = scene.shadow_ray_epsilon;
@@ -423,6 +521,9 @@ int main(int argc, char* argv[])
     //
     // Normally, you would be running your ray tracing
     // code here to produce the desired image.
+
+    global_meshTriangles_normals = all_meshTriangles_normals(scene);
+    global_triangle_normals = tirangle_normals(scene);
 
     const RGB BAR_COLOR[8] =
     {
