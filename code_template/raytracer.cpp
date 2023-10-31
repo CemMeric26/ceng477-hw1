@@ -1,5 +1,6 @@
 #include <iostream>
 #include <limits>
+#include <cmath>
 #include "parser.h"
 #include "ppm.h"
 
@@ -11,6 +12,27 @@ float pos_inf = std::numeric_limits<float>::infinity();
 struct IntersectionResult {
     bool has_intersection;
     parser::Vec3f hit_point;
+};
+
+
+enum Type_of_Object {
+    TRIANGLE,
+    SPHERE,
+    MESH
+};
+
+parser::Vec3f scalar_multiply_vec3f(parser::Vec3f v, float scalar);
+parser::Vec3f add_vec3f(parser::Vec3f v1, parser::Vec3f v2);
+
+struct HitData {
+    bool has_intersection;
+    Type_of_Object type;
+    int id;
+    float t;
+    parser::Vec3f hit_point;
+    parser::Vec3f normal;
+    int material_id;
+
 };
 
 class Ray {
@@ -27,31 +49,26 @@ public:
     }
 };
 
-enum Type_of_Object {
-    TRIANGLE,
-    SPHERE,
-    MESH
-};
 
+HitData hit_triangle(Ray& ray, parser::Scene& scene, parser::Triangle& triangle, int unique_id, parser::Vec3f triangle_normal);
+HitData hit_sphere(Ray& ray, parser::Scene& scene, parser::Sphere& sphere, int unique_id);
+HitData hit_mesh(Ray& ray, parser::Scene& scene, parser::Mesh& mesh, int unique_id);
+parser::Vec3i apply_shading_to_pixel(int recursion_depth, parser::Scene& scene, HitData& hit_data, Ray& ray);
 
-struct HitData {
-    bool has_intersection;
-    Type_of_Object type;
-    int id;
-    float t;
-    parser::Vec3f hit_point;
-    parser::Vec3f normal;
-    int material_id;
-
-};
-
-std::vector<parser::Vec3f> global_triangle_normals;
-std::vector<std::vector<parser::Vec3f>> global_meshTriangles_normals;
+std::vector<parser::Vec3f> global_triangle_normals; // triangles normals array
+std::vector<std::vector<parser::Vec3f>> global_meshTriangles_normals; // mesh triangles normals array
 
 
 float min(float a, float b)
 {
     if(a < b)
+        return a;
+    else
+        return b;
+}
+float max(float a, float b)
+{
+    if(a > b)
         return a;
     else
         return b;
@@ -85,7 +102,7 @@ parser::Vec3f scalar_multiply_vec3f(parser::Vec3f v1, float scalar)
 }
 
  
-parser::Vec3f add_vec3f(parser::Vec3f v1, parser::Vec3f v2)
+parser::Vec3f add_vec3f(parser::Vec3f& v1, parser::Vec3f& v2)
 {
     parser::Vec3f v;
     v.x = v1.x + v2.x;
@@ -93,7 +110,8 @@ parser::Vec3f add_vec3f(parser::Vec3f v1, parser::Vec3f v2)
     v.z = v1.z + v2.z;
     return v;
 }
-parser::Vec3f cross_product_vec3f(parser::Vec3f v1, parser::Vec3f v2)
+
+parser::Vec3f cross_product_vec3f(parser::Vec3f& v1, parser::Vec3f& v2)
 {
     parser::Vec3f v;
     v.x = v1.y*v2.z - v1.z*v2.y;
@@ -112,7 +130,8 @@ parser::Vec3f normalize_vec3f(parser::Vec3f v)
     return v_normalized;
 }
 
-parser::Vec3f triangle_unitnormal_calc(parser::Vec3f v0, parser::Vec3f v1, parser::Vec3f v2)
+
+parser::Vec3f triangle_unitnormal_calc(parser::Vec3f& v0, parser::Vec3f& v1, parser::Vec3f& v2)
 {
     parser::Vec3f v0v1 = substract_vec3f(v1, v0);
 
@@ -184,56 +203,32 @@ float dot_product_vec3f(parser::Vec3f v1, parser::Vec3f v2)
 
 bool backface_of_camera(parser::Vec3f camera_position, parser::Vec3f camera_gaze, parser::Vec3f triangle_normal)
 {
+
     parser::Vec3f camera_to_triangle = substract_vec3f(camera_position, triangle_normal);
     float magnitude_product = (vector_magnitude(camera_to_triangle)*vector_magnitude(triangle_normal));
     float cos_theta = dot_product_vec3f(camera_to_triangle, triangle_normal)/ magnitude_product;
     if(cos_theta > 0 && cos_theta < 1)
-        return true;
-    else
         return false;
+    else
+        return true;
     
 }
 
-/* Ray generate_ray(parser::Camera camera, int i, int j)
-{
-    // Calculate w, u, v
-    parser::Vec3f w = scalar_multiply_vec3f(normalize_vec3f(camera.gaze), -1); // Inverse and normalize gaze direction
-    parser::Vec3f u = normalize_vec3f(cross_product_vec3f(camera.up, w));
-    parser::Vec3f v = cross_product_vec3f(w, u);
+bool isBackFacing(const parser::Vec3f& camera_position, const parser::Vec3f& triangle_vertex, const parser::Vec3f& triangle_normal) {
+    // Compute the vector from the vertex to the camera
+    parser::Vec3f vertex_to_camera = substract_vec3f(triangle_vertex, camera_position);
 
-    // Extract l, r, t, b from near_plane
-    float l = camera.near_plane.x;
-    float r = camera.near_plane.y;
-    float t = camera.near_plane.z;
-    float b = camera.near_plane.w;
+    // Normalize the vectors
+    vertex_to_camera = normalize_vec3f(vertex_to_camera);
+    parser::Vec3f normalized_triangle_normal = normalize_vec3f(triangle_normal);
 
-    // Calculate m
-    parser::Vec3f m = add_vec3f(camera.position, scalar_multiply_vec3f(w, camera.near_distance));
+    // Compute the dot product between the vector and the triangle normal
+    float dot = dot_product_vec3f(vertex_to_camera, normalized_triangle_normal);
 
-    // Calculate q
-    parser::Vec3f q = add_vec3f(
-        add_vec3f(m, scalar_multiply_vec3f(u, l)),
-        scalar_multiply_vec3f(v, t)
-    );
-
-    // Calculate s_u and s_v
-    float s_u = (i + 0.5f) * (r - l) / camera.image_width;
-    float s_v = (j + 0.5f) * (t - b) / camera.image_height;
-
-    // Calculate s
-    parser::Vec3f s = add_vec3f(
-        add_vec3f(q, scalar_multiply_vec3f(u, s_u)),
-        scalar_multiply_vec3f(v, -s_v)  // Note the subtraction here
-    );
-
-    // Calculate ray direction
-    parser::Vec3f d = substract_vec3f(s, camera.position);
-    d = normalize_vec3f(d);
-
-    // Return the ray
-    return Ray(camera.position, d);
+    // If the dot product is greater than 0, then the triangle is facing away from the camera
+    return dot > 0;
 }
- */
+
 Ray generate_ray(parser::Camera& camera, int i, int j)
 {
     // right = cross_product(gaze, up)
@@ -244,13 +239,22 @@ Ray generate_ray(parser::Camera& camera, int i, int j)
     // pixelPosition = imagePlaneCenter + (i + 0.5) * pixelWidth * right - (j + 0.5) * pixelHeight * up
     float pixelWidth = (camera.near_plane.x - camera.near_plane.y) / camera.image_width;
     float pixelHeight = (camera.near_plane.w - camera.near_plane.z) / camera.image_height;
-    parser::Vec3f pixelPosition = add_vec3f(
+    /* parser::Vec3f pixelPosition = add_vec3f(
         add_vec3f(
             imagePlaneCenter,
             scalar_multiply_vec3f(right, (i + 0.5) * pixelWidth - (camera.image_width / 2.0) * pixelWidth)
         ),
         scalar_multiply_vec3f(camera.up, (j + 0.5) * pixelHeight - (camera.image_height / 2.0) * pixelHeight)
-    );
+    ); */
+
+    parser::Vec3f pixelPosition = add_vec3f(
+    add_vec3f(
+        imagePlaneCenter,
+        scalar_multiply_vec3f(right, (camera.image_width / 2.0) * pixelWidth - (i + 0.5) * pixelWidth)
+    ),
+    scalar_multiply_vec3f(camera.up, (camera.image_height / 2.0) * pixelHeight - (j + 0.5) * pixelHeight)
+);
+
     // ray_direction = normalize(pixelPosition - camera.position)
     parser::Vec3f ray_direction = normalize_vec3f(substract_vec3f(pixelPosition, camera.position));
 
@@ -275,11 +279,16 @@ HitData closest_hit(Ray& ray, parser::Scene& scene)
     {
         parser::Triangle triangle = scene.triangles[i];
         parser::Vec3f triangle_normal = global_triangle_normals[i];
+        
         HitData hit_data = hit_triangle(ray, scene, triangle, i, triangle_normal);
+        
         if(hit_data.has_intersection)
         {
             hit_t = min(hit_data.t, hit_t);
-            closest_hit_data = hit_data;
+           if(hit_t == hit_data.t)
+            {
+                closest_hit_data = hit_data;
+            }
         }
     }
     // for each sphere
@@ -323,11 +332,9 @@ HitData hit_triangle(Ray& ray, parser::Scene& scene, parser::Triangle& triangle,
     parser::Vec3f v1 = scene.vertex_data[triangle.indices.v1_id - 1];
     parser::Vec3f v2 = scene.vertex_data[triangle.indices.v2_id - 1];
 
-    //parser::Vec3f triangle_normal = triangle_unitnormal_calc(v0, v1, v2);
-    // parser::Vec3f triangle_normal = global_triangle_normals[triangle_normal_id];
 
     // Check if the triangle is backface of the camera
-    if(!backface_of_camera(ray.origin, ray.direction, triangle_normal))
+    if(!isBackFacing(ray.origin, v0, triangle_normal))
     {
         parser::Vec3f direction = ray.direction;
         // a = v0
@@ -466,6 +473,50 @@ HitData hit_mesh(Ray& ray, parser::Scene& scene, parser::Mesh& mesh, int mesh_in
     return hit_data;
 }
 
+bool shadowray_obj_intersect(Ray& ray, parser::Scene& scene)
+{
+    // for each object in the scene
+    int size_of_triangles = scene.triangles.size();
+    int size_of_spheres = scene.spheres.size();
+    int size_of_meshes = scene.meshes.size();
+
+    // for each triangle
+    for(int i=0; i<size_of_triangles; i++)
+    {
+        parser::Triangle triangle = scene.triangles[i];
+        parser::Vec3f triangle_normal = global_triangle_normals[i];
+        
+        HitData hit_data = hit_triangle(ray, scene, triangle, i, triangle_normal);
+        
+        if(hit_data.has_intersection)
+        {
+            return true;
+        }
+    }
+    // for each sphere
+    for(int j=0; j<size_of_spheres; j++)
+    {
+        parser::Sphere sphere = scene.spheres[j];
+        HitData hit_data = hit_sphere(ray, scene, sphere, j);
+        if(hit_data.has_intersection)
+        {
+            return true;
+        }
+    }
+    // for each mesh
+    for(int k=0; k<size_of_meshes; k++)
+    {
+        parser::Mesh mesh = scene.meshes[k];
+        HitData hit_data = hit_mesh(ray, scene, mesh, k);
+        if(hit_data.has_intersection)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 parser::Vec3i compute_pixel_color(Ray& ray, HitData& hit_data, parser::Scene& scene, int recursion_depth)
 {
     if(recursion_depth > scene.max_recursion_depth)
@@ -493,8 +544,45 @@ parser::Vec3i compute_pixel_color(Ray& ray, HitData& hit_data, parser::Scene& sc
 
 parser::Vec3i apply_shading_to_pixel(int recursion_depth, parser::Scene& scene, HitData& hit_data, Ray& ray)
 {
-    parser::Vec3i pixel_color = { 255,   0,   0 };  // Red ;
-    return pixel_color;
+    parser::Vec3f color = scene.materials[hit_data.material_id].ambient; // we started adding with ambient light
+
+    // for each point light
+    int size_of_point_lights = scene.point_lights.size();
+    for(int i=0; i<size_of_point_lights; i++)
+    {
+        parser::PointLight point_light = scene.point_lights[i];
+        parser::Vec3f light_position = point_light.position;
+        parser::Vec3f light_intensity = point_light.intensity;
+
+        // shadow ray is generated
+        parser::Vec3f shadow_ray_direction = substract_vec3f(light_position, hit_data.hit_point);
+        Ray shadow_ray(hit_data.hit_point, shadow_ray_direction);
+
+        parser::Vec3f normalized_shadow_ray_direction = normalize_vec3f(shadow_ray_direction);
+
+        // closest hit is calculated
+        // IMPORTANTE RISOLTATE
+        // insteead of using closest_hit define a another function beacuse we don't need to calculate the closest hit we just need any HIT
+        bool shadow_ray_hit= shadowray_obj_intersect(shadow_ray, scene);
+
+        // if there is no intersection
+        if(!shadowray_obj_intersect(shadow_ray, scene))
+        {
+            // diffuse light is calculated
+            parser::Vec3f diffuse_light = scalar_multiply_vec3f(light_intensity, max(0, dot_product_vec3f(hit_data.normal, normalized_shadow_ray_direction))); // formula is I * max(0, dot_product(n, l))
+            // specular light is calculated
+            // formula is I * max(0, dot_product(n, h))^p 
+            parser::Vec3f specular_light = scalar_multiply_vec3f(light_intensity, pow(max(0, dot_product_vec3f(hit_data.normal, shadow_ray_direction)), scene.materials[hit_data.material_id].phong_exponent));
+
+            // diffuse light is added to the color
+            // color = color + diffuse_light => diffuse_light = diffuse_factor * 
+            color = add_vec3f(color, scalar_multiply_vec3f(scene.materials[hit_data.material_id].diffuse, point_light.intensity)); // we need  float here
+            // specular light is added to the color
+            color = add_vec3f(color, scalar_multiply_vec3f(scene.materials[hit_data.material_id].specular, point_light.intensity)); // and here
+        }
+    }
+
+
 }
 
 void Main_raytrace_Computer(parser::Scene& scene)
@@ -509,8 +597,11 @@ void Main_raytrace_Computer(parser::Scene& scene)
     {
         for(int j=0; j<height; j++)
         {
+            // ray is generated
             Ray ray = generate_ray(camera, i, j);
+            // closest hit is calculated
             HitData hit_data = closest_hit(ray, scene);
+
             if(hit_data.has_intersection)
             {
                 
@@ -527,6 +618,8 @@ void Main_raytrace_Computer(parser::Scene& scene)
             }
         }
     }
+
+    write_ppm("test.ppm", image, width, height);
       
 }
 
@@ -555,6 +648,9 @@ int main(int argc, char* argv[])
     global_triangle_normals = tirangle_normals(scene);
 
 
+    Main_raytrace_Computer(scene);
+
+
     const RGB BAR_COLOR[8] =
     {
         { 255, 255, 255 },  // 100% White
@@ -567,7 +663,7 @@ int main(int argc, char* argv[])
         {   0,   0,   0 },  // Black
     };
 
-    int width = 640, height = 480;
+    /* int width = 640, height = 480;
     int columnWidth = width / 8;
 
     unsigned char* image = new unsigned char [width * height * 3];
@@ -585,6 +681,6 @@ int main(int argc, char* argv[])
     }
 
     //  You should render as many images as the number of cameras.
-    write_ppm("test.ppm", image, width, height);
+    write_ppm("test.ppm", image, width, height); */
 
 }
