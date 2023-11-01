@@ -630,9 +630,13 @@ parser::Vec3f apply_shading_to_pixel(parser::Scene& scene, HitData& hit_data, Ra
 
         // shadow ray is generated
         parser::Vec3f shadow_ray_direction = substract_vec3f(light_position, hit_data.hit_point); // light_position - hit_point
-        Ray shadow_ray(hit_data.hit_point, shadow_ray_direction);
+        
 
         parser::Vec3f normalized_shadow_ray_direction = normalize_vec3f(shadow_ray_direction);
+        parser::Vec3f epsilon_ray = scalar_multiply_vec3f(normalized_shadow_ray_direction, scene.shadow_ray_epsilon); // shadow_ray_direction * epsilon
+
+        Ray shadow_ray(add_vec3f(hit_data.hit_point, epsilon_ray), shadow_ray_direction); // hit_point + epsilon_ray =origin, shadow_ray_direction = direction
+
 
         bool shadow_ray_hit= shadowray_obj_intersect(shadow_ray, scene);
 
