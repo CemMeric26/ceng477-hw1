@@ -1,2 +1,3 @@
 all:
-	g++ *.cpp -o raytracer -std=c++11
+	g++ -O3 -std=c++11 *.cpp -o raytracer
+

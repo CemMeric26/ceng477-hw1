@@ -1,6 +1,7 @@
 #include <iostream>
 #include <limits>
 #include <cmath>
+#include <algorithm>
 #include "parser.h"
 #include "ppm.h"
 
@@ -53,7 +54,7 @@ public:
 HitData hit_triangle(Ray& ray, parser::Scene& scene, parser::Triangle& triangle, int unique_id, parser::Vec3f triangle_normal);
 HitData hit_sphere(Ray& ray, parser::Scene& scene, parser::Sphere& sphere, int unique_id);
 HitData hit_mesh(Ray& ray, parser::Scene& scene, parser::Mesh& mesh, int unique_id);
-parser::Vec3i apply_shading_to_pixel(int recursion_depth, parser::Scene& scene, HitData& hit_data, Ray& ray);
+parser::Vec3f apply_shading_to_pixel(parser::Scene& scene, HitData& hit_data, Ray& ray);
 
 std::vector<parser::Vec3f> global_triangle_normals; // triangles normals array
 std::vector<std::vector<parser::Vec3f>> global_meshTriangles_normals; // mesh triangles normals array
@@ -102,7 +103,7 @@ parser::Vec3f scalar_multiply_vec3f(parser::Vec3f v1, float scalar)
 }
 
  
-parser::Vec3f add_vec3f(parser::Vec3f& v1, parser::Vec3f& v2)
+parser::Vec3f add_vec3f(parser::Vec3f v1, parser::Vec3f v2)
 {
     parser::Vec3f v;
     v.x = v1.x + v2.x;
@@ -130,6 +131,22 @@ parser::Vec3f normalize_vec3f(parser::Vec3f v)
     return v_normalized;
 }
 
+parser::Vec3f vector_multiply (parser::Vec3f v1, parser::Vec3f v2)
+{
+    parser::Vec3f v;
+    v.x = v1.x * v2.x;
+    v.y = v1.y * v2.y;
+    v.z = v1.z * v2.z;
+    return v;
+}
+parser::Vec3f negate(parser::Vec3f& v)
+{
+    parser::Vec3f v_negated;
+    v_negated.x = -v.x;
+    v_negated.y = -v.y;
+    v_negated.z = -v.z;
+    return v_negated;
+}
 
 parser::Vec3f triangle_unitnormal_calc(parser::Vec3f& v0, parser::Vec3f& v1, parser::Vec3f& v2)
 {
@@ -141,11 +158,39 @@ parser::Vec3f triangle_unitnormal_calc(parser::Vec3f& v0, parser::Vec3f& v1, par
     return normal;
 }
 
+/* template<typename T>
+T clamp(T value, T min, T max) {
+    return std::max(min, std::min(max, value));
+} */
+
+parser::Vec3i clamp_color(const parser::Vec3f& color) {
+    parser::Vec3i clamped_color;
+    if(color.x > 255)
+        clamped_color.x = 255;
+    else
+        clamped_color.x = round(color.x);
+
+    if(color.y > 255)
+        clamped_color.y = 255;
+    else
+        clamped_color.y = round(color.y);
+
+    if(color.z > 255)
+        clamped_color.z = 255;
+    else
+        clamped_color.z = round(color.z);
+
+    return clamped_color;
+}
+
+
+
 std::vector<parser::Vec3f> tirangle_normals(parser::Scene& scene)
 {
     std::vector<parser::Vec3f> normals;
-    
+
     int size_of_triangles = scene.triangles.size();
+    normals.reserve(size_of_triangles);
 
     for(int i=0; i < size_of_triangles;i++)
     {
@@ -239,13 +284,6 @@ Ray generate_ray(parser::Camera& camera, int i, int j)
     // pixelPosition = imagePlaneCenter + (i + 0.5) * pixelWidth * right - (j + 0.5) * pixelHeight * up
     float pixelWidth = (camera.near_plane.x - camera.near_plane.y) / camera.image_width;
     float pixelHeight = (camera.near_plane.w - camera.near_plane.z) / camera.image_height;
-    /* parser::Vec3f pixelPosition = add_vec3f(
-        add_vec3f(
-            imagePlaneCenter,
-            scalar_multiply_vec3f(right, (i + 0.5) * pixelWidth - (camera.image_width / 2.0) * pixelWidth)
-        ),
-        scalar_multiply_vec3f(camera.up, (j + 0.5) * pixelHeight - (camera.image_height / 2.0) * pixelHeight)
-    ); */
 
     parser::Vec3f pixelPosition = add_vec3f(
     add_vec3f(
@@ -324,6 +362,57 @@ HitData closest_hit(Ray& ray, parser::Scene& scene)
 
 }
 
+HitData hit_sphere(Ray& ray, parser::Scene& scene, parser::Sphere& sphere, int unique_id)
+{
+    parser::Vec3f hit_point;
+    float hit_t = pos_inf;
+
+    parser::Vec3f center = scene.vertex_data[sphere.center_vertex_id-1];
+    float radius = sphere.radius;
+
+    // d is the ray direction
+    parser::Vec3f d = ray.direction;
+
+    // o-c is center_O in your code
+    parser::Vec3f center_O = substract_vec3f(ray.origin, center); // o-c
+
+    // Calculate dot(d, o-c)
+    float dot_d_centerO = dot_product_vec3f(d, center_O); 
+
+    // Calculate dot(o-c, o-c)
+    float dot_centerO_centerO = dot_product_vec3f(center_O, center_O);
+
+    // Calculate dot(d, d)
+    float dot_d_d = dot_product_vec3f(d, d);
+
+    // Calculate discriminant inside the square root
+    float discriminant = dot_d_centerO * dot_d_centerO - dot_d_d * (dot_centerO_centerO - radius * radius); // (d.(o-c))^2 - (d.d)((o-c).(o-c) - r^2)
+
+    // If discriminant is negative, the ray doesn't intersect the sphere
+    if (discriminant < 0) {
+        // Handle this case
+        return {false, SPHERE, unique_id, pos_inf, {}, {}, sphere.material_id} ;  // or whatever is appropriate in your context
+    }
+
+    // Calculate the two possible values for t (t1 and t2)
+    float t1 = (-dot_d_centerO - sqrt(discriminant)) / dot_d_d;
+    float t2 = (-dot_d_centerO + sqrt(discriminant)) / dot_d_d;
+
+    if((t1 > 0 && t2 > 0) || t1 == t2)
+    {
+        hit_t = min( min(t1,t2) ,hit_t); 
+            
+    }
+
+    hit_point = ray.at(hit_t);
+    parser::Vec3f sphere_normal = substract_vec3f(hit_point, center);
+    sphere_normal = normalize_vec3f(sphere_normal);
+
+    return {true, SPHERE, unique_id, hit_t, hit_point, sphere_normal, sphere.material_id};
+
+}
+
+
 HitData hit_triangle(Ray& ray, parser::Scene& scene, parser::Triangle& triangle, int unique_id, parser::Vec3f triangle_normal)
 {
     parser::Vec3f hit_point;
@@ -394,56 +483,12 @@ HitData hit_triangle(Ray& ray, parser::Scene& scene, parser::Triangle& triangle,
  
 }
 
-HitData hit_sphere(Ray& ray, parser::Scene& scene, parser::Sphere& sphere, int unique_id)
-{
-    parser::Vec3f hit_point;
-    float hit_t = pos_inf;
-
-    parser::Vec3f center = scene.vertex_data[sphere.center_vertex_id-1];
-    float radius = sphere.radius;
-
-    // d is the ray direction
-    parser::Vec3f d = ray.direction;
-
-    // o-c is center_O in your code
-    parser::Vec3f center_O = substract_vec3f(ray.origin, center); // o-c
-
-    // Calculate dot(d, o-c)
-    float dot_d_centerO = dot_product_vec3f(d, center_O); 
-
-    // Calculate dot(o-c, o-c)
-    float dot_centerO_centerO = dot_product_vec3f(center_O, center_O);
-
-    // Calculate dot(d, d)
-    float dot_d_d = dot_product_vec3f(d, d);
-
-    // Calculate discriminant inside the square root
-    float discriminant = dot_d_centerO * dot_d_centerO - dot_d_d * (dot_centerO_centerO - radius * radius); // (d.(o-c))^2 - (d.d)((o-c).(o-c) - r^2)
-
-    // If discriminant is negative, the ray doesn't intersect the sphere
-    if (discriminant < 0) {
-        // Handle this case
-        return {false, SPHERE, unique_id, pos_inf, {}, {}, sphere.material_id} ;  // or whatever is appropriate in your context
-    }
-
-    // Calculate the two possible values for t (t1 and t2)
-    float t1 = (-dot_d_centerO - sqrt(discriminant)) / dot_d_d;
-    float t2 = (-dot_d_centerO + sqrt(discriminant)) / dot_d_d;
-
-    if((t1 > 0 && t2 > 0) || t1 == t2)
-    {
-        hit_t = min( min(t1,t2) ,hit_t); 
-            
-    }
-
-    return {true, SPHERE, unique_id, hit_t, ray.at(hit_t), {}, sphere.material_id};
-
-}
-
 HitData hit_mesh(Ray& ray, parser::Scene& scene, parser::Mesh& mesh, int mesh_index)
 {
     parser::Triangle mesh_triangle;
     int mesh_size = mesh.faces.size();
+    HitData hit_data;
+    HitData closest_hit;
 
     float hit_t = pos_inf;
     int unique_id=0;
@@ -453,25 +498,25 @@ HitData hit_mesh(Ray& ray, parser::Scene& scene, parser::Mesh& mesh, int mesh_in
         mesh_triangle.material_id = mesh.material_id;
         mesh_triangle.indices = mesh.faces[i];
         parser::Vec3f triangle_normal = global_meshTriangles_normals[mesh_index][i];
+        
+        hit_data = hit_triangle(ray, scene, mesh_triangle, i,triangle_normal);
 
-        HitData hit_data = hit_triangle(ray, scene, mesh_triangle, i,triangle_normal);
-        if(hit_data.has_intersection)
+        if(hit_data.has_intersection && hit_t > 0  && hit_data.t < hit_t)
         {
-            hit_t = min(hit_data.t, hit_t);
-            if(hit_t == hit_data.t)
-            {
-                unique_id = i;
-            }
+            hit_t = hit_data.t;
+            closest_hit = hit_data;
         }
     }
-    if(hit_t != pos_inf) // if there is a hit
+    if(hit_t < pos_inf) // if there is a hit
     {
-        return {true, MESH, unique_id, hit_t, ray.at(hit_t), {}, mesh.material_id};
+        closest_hit.type = MESH;  // only obj type is changed
+        return closest_hit;
     }
 
-    HitData hit_data = {false, MESH, unique_id , pos_inf, {}, {}, mesh.material_id};
+    hit_data = {false, MESH, unique_id , pos_inf, {}, {}, mesh.material_id};
     return hit_data;
 }
+
 
 bool shadowray_obj_intersect(Ray& ray, parser::Scene& scene)
 {
@@ -485,6 +530,8 @@ bool shadowray_obj_intersect(Ray& ray, parser::Scene& scene)
     {
         parser::Triangle triangle = scene.triangles[i];
         parser::Vec3f triangle_normal = global_triangle_normals[i];
+
+        // no need to implement backface culling for shadow rays
         
         HitData hit_data = hit_triangle(ray, scene, triangle, i, triangle_normal);
         
@@ -507,6 +554,7 @@ bool shadowray_obj_intersect(Ray& ray, parser::Scene& scene)
     for(int k=0; k<size_of_meshes; k++)
     {
         parser::Mesh mesh = scene.meshes[k];
+        // no need to implement backface culling for shadow rays
         HitData hit_data = hit_mesh(ray, scene, mesh, k);
         if(hit_data.has_intersection)
         {
@@ -517,37 +565,63 @@ bool shadowray_obj_intersect(Ray& ray, parser::Scene& scene)
     return false;
 }
 
-parser::Vec3i compute_pixel_color(Ray& ray, HitData& hit_data, parser::Scene& scene, int recursion_depth)
+parser::Vec3i compute_pixel_color(Ray& ray, HitData& hit_data, parser::Scene& scene)
 {
-    if(recursion_depth > scene.max_recursion_depth)
-    {
-        return {0,0,0};
-    }
+
     if(hit_data.has_intersection)
     {
         // find the color at the closest hit
 
-        return apply_shading_to_pixel(recursion_depth, scene, hit_data, ray);
+        parser::Vec3f shaded_color = apply_shading_to_pixel(scene, hit_data, ray);
+
+
+        return clamp_color(shaded_color);
+        // return shaded_color;
+        //return {255,0,0};  // returns red nop
     }
-    else if(recursion_depth == 0)
-    {
-        // no intersection for primary ray
-        return scene.background_color;
-    }
-    else
-    {
-        // avoid repeated addition of the background color for reflected rays
-        return {0,0,0};
-    }
+
+    return scene.background_color;
 
 }
 
-parser::Vec3i apply_shading_to_pixel(int recursion_depth, parser::Scene& scene, HitData& hit_data, Ray& ray)
+parser::Vec3f diffuse_light_calc(parser::Vec3f& normalized_shadow_ray_direction, parser::Vec3f& k_d, parser::Vec3f& hit_normal, float distance_sqr, parser::Vec3f& light_intensity)
+{
+    
+    parser::Vec3f diffuse_light;
+    parser::Vec3f light_irradiance = scalar_multiply_vec3f(light_intensity, (1/(distance_sqr)));
+    float cos_theta = max(0, dot_product_vec3f(normalized_shadow_ray_direction, hit_normal));
+
+    diffuse_light.x = k_d.x * light_irradiance.x * cos_theta;
+    diffuse_light.y = k_d.y * light_irradiance.y * cos_theta;
+    diffuse_light.z = k_d.z * light_irradiance.z * cos_theta;
+
+    return diffuse_light;
+}
+
+parser::Vec3f specular_light_calc(parser::Vec3f& normalized_shadow_ray_direction, parser::Vec3f& k_s, parser::Vec3f& hit_normal, float distance_sqr, parser::Vec3f& light_intensity, parser::Vec3f& ray_direction, float phong_exponent)
+{
+    // h = (w_i+w_o)/|w_i+w_o|
+
+    parser::Vec3f half_vector = normalize_vec3f(add_vec3f(normalized_shadow_ray_direction, normalize_vec3f(negate(ray_direction)))); // (w_i+w_o)/|w_i+w_o|
+    // max(0,n.h)
+    float cos_alfa = max(0, dot_product_vec3f(hit_normal, half_vector));
+    // cos_theta/(r^2)
+    parser::Vec3f irradiance = scalar_multiply_vec3f(light_intensity,(1/(distance_sqr))) ;
+    // specular light is calculated
+    // formula is I * max(0, dot_product(n, h))^p 
+    parser::Vec3f specular_factor = scalar_multiply_vec3f(irradiance, pow(cos_alfa, phong_exponent));
+    parser::Vec3f specular_light = vector_multiply(k_s, specular_factor);
+
+    return specular_light;
+}
+
+parser::Vec3f apply_shading_to_pixel(parser::Scene& scene, HitData& hit_data, Ray& ray)
 {
     parser::Vec3f color = scene.materials[hit_data.material_id].ambient; // we started adding with ambient light
 
     // for each point light
     int size_of_point_lights = scene.point_lights.size();
+    // std::cout << "size of point lights: " << size_of_point_lights << std::endl;
     for(int i=0; i<size_of_point_lights; i++)
     {
         parser::PointLight point_light = scene.point_lights[i];
@@ -555,32 +629,40 @@ parser::Vec3i apply_shading_to_pixel(int recursion_depth, parser::Scene& scene, 
         parser::Vec3f light_intensity = point_light.intensity;
 
         // shadow ray is generated
-        parser::Vec3f shadow_ray_direction = substract_vec3f(light_position, hit_data.hit_point);
+        parser::Vec3f shadow_ray_direction = substract_vec3f(light_position, hit_data.hit_point); // light_position - hit_point
         Ray shadow_ray(hit_data.hit_point, shadow_ray_direction);
 
         parser::Vec3f normalized_shadow_ray_direction = normalize_vec3f(shadow_ray_direction);
 
-        // closest hit is calculated
-        // IMPORTANTE RISOLTATE
-        // insteead of using closest_hit define a another function beacuse we don't need to calculate the closest hit we just need any HIT
         bool shadow_ray_hit= shadowray_obj_intersect(shadow_ray, scene);
 
         // if there is no intersection
-        if(!shadowray_obj_intersect(shadow_ray, scene))
+        if(!shadow_ray_hit)
         {
-            // diffuse light is calculated
-            parser::Vec3f diffuse_light = scalar_multiply_vec3f(light_intensity, max(0, dot_product_vec3f(hit_data.normal, normalized_shadow_ray_direction))); // formula is I * max(0, dot_product(n, l))
-            // specular light is calculated
-            // formula is I * max(0, dot_product(n, h))^p 
-            parser::Vec3f specular_light = scalar_multiply_vec3f(light_intensity, pow(max(0, dot_product_vec3f(hit_data.normal, shadow_ray_direction)), scene.materials[hit_data.material_id].phong_exponent));
 
-            // diffuse light is added to the color
-            // color = color + diffuse_light => diffuse_light = diffuse_factor * 
-            color = add_vec3f(color, scalar_multiply_vec3f(scene.materials[hit_data.material_id].diffuse, point_light.intensity)); // we need  float here
+            float distance_sqr = dot_product_vec3f(shadow_ray_direction,shadow_ray_direction); // distance = shadow_ray_direction * shadow_ray_direction
+            // diffuse light is calculated 
+            parser::Vec3f diffuse_light = diffuse_light_calc(normalized_shadow_ray_direction, scene.materials[hit_data.material_id].diffuse, hit_data.normal, distance_sqr, light_intensity);
+            
+            // specular light is calculated
+            parser::Vec3f specular_light = specular_light_calc(normalized_shadow_ray_direction, scene.materials[hit_data.material_id].specular, hit_data.normal, distance_sqr, light_intensity, ray.direction, scene.materials[hit_data.material_id].phong_exponent);
+            
+            // color = add_vec3f(color, diffuse_light); 
+            
+            color.x += diffuse_light.x;
+            color.y += diffuse_light.y;
+            color.z += diffuse_light.z;
+
+
             // specular light is added to the color
-            color = add_vec3f(color, scalar_multiply_vec3f(scene.materials[hit_data.material_id].specular, point_light.intensity)); // and here
+            // color = add_vec3f(color, specular_light); // and here
+
         }
     }
+
+    // color = {255,0,0};
+
+    return color;
 
 
 }
@@ -605,7 +687,7 @@ void Main_raytrace_Computer(parser::Scene& scene)
             if(hit_data.has_intersection)
             {
                 
-                parser::Vec3f pixel_color = { 255,   0,   0 };  // Red ;
+                parser::Vec3i pixel_color = compute_pixel_color(ray, hit_data, scene);  // Red ;
                 image[(i + j * width) * 3 + 0] = pixel_color.x;
                 image[(i + j * width) * 3 + 1] = pixel_color.y;
                 image[(i + j * width) * 3 + 2] = pixel_color.z;
