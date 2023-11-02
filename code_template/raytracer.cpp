@@ -40,6 +40,7 @@ class Ray {
 public:
     parser::Vec3f origin;
     parser::Vec3f direction;
+    int reflection_depth = 0;
 
     Ray(const parser::Vec3f& origin, const parser::Vec3f& direction) : origin(origin), direction(direction) {}
 
@@ -565,22 +566,36 @@ bool shadowray_obj_intersect(Ray& ray, parser::Scene& scene)
     return false;
 }
 
-parser::Vec3i compute_pixel_color(Ray& ray, HitData& hit_data, parser::Scene& scene)
+parser::Vec3f compute_pixel_color(Ray& ray, HitData& hit_data, parser::Scene& scene)
 {
+    if(ray.reflection_depth > scene.max_recursion_depth)
+    {
+        return {0,0,0};
+    }
 
     if(hit_data.has_intersection)
     {
         // find the color at the closest hit
 
-        parser::Vec3f shaded_color = apply_shading_to_pixel(scene, hit_data, ray);
+        /* parser::Vec3f shaded_color = apply_shading_to_pixel(scene, hit_data, ray);
 
 
-        return clamp_color(shaded_color);
-        // return shaded_color;
-        //return {255,0,0};  // returns red nop
+        return clamp_color(shaded_color); */
+        return apply_shading_to_pixel(scene, hit_data, ray);
+
     }
-
-    return scene.background_color;
+    else if (ray.reflection_depth == 0)
+    {
+        parser::Vec3f background_color;
+        background_color.x = scene.background_color.x;
+        background_color.y = scene.background_color.y;
+        background_color.z = scene.background_color.z;
+        return background_color;
+    }
+    else
+    {
+        return {0,0,0};
+    }
 
 }
 
@@ -615,9 +630,38 @@ parser::Vec3f specular_light_calc(parser::Vec3f& normalized_shadow_ray_direction
     return specular_light;
 }
 
+parser::Vec3f reflection_vector_calc(parser::Vec3f& incoming_ray_direction, parser::Vec3f& hit_normal)
+{
+    // r = 2(n.w_i)n - w_i ?? which one the formula
+    // r =  w_i - 2(n.w_i)n 
+    // n, w_i are all unit vector should i normalize
+    incoming_ray_direction = normalize_vec3f(incoming_ray_direction);
+    parser::Vec3f reflection_vector = substract_vec3f(incoming_ray_direction, scalar_multiply_vec3f(hit_normal, 2*dot_product_vec3f(hit_normal, incoming_ray_direction)));
+    return reflection_vector;
+}
+
 parser::Vec3f apply_shading_to_pixel(parser::Scene& scene, HitData& hit_data, Ray& ray)
 {
     parser::Vec3f color = scene.materials[hit_data.material_id].ambient; // we started adding with ambient light
+
+
+    // for mirror reflection
+    if(scene.materials[hit_data.material_id].mirror.x != 0 || scene.materials[hit_data.material_id].mirror.y != 0 || scene.materials[hit_data.material_id].mirror.z != 0)
+    {
+        // reflection ray is generated
+        parser::Vec3f reflection_ray_direction = reflection_vector_calc(ray.direction, hit_data.normal);
+        Ray reflection_ray(hit_data.hit_point, reflection_ray_direction);
+        HitData reflection_hit_data = closest_hit(reflection_ray, scene);
+        reflection_ray.reflection_depth = ray.reflection_depth + 1;
+
+        if(reflection_hit_data.has_intersection)
+        {
+            parser::Vec3f reflection_color = compute_pixel_color(reflection_ray, reflection_hit_data, scene);
+            color.x += reflection_color.x;
+            color.y += reflection_color.y;
+            color.z += reflection_color.z;
+        }
+    }
 
     // for each point light
     int size_of_point_lights = scene.point_lights.size();
@@ -690,8 +734,8 @@ void Main_raytrace_Computer(parser::Scene& scene)
 
             if(hit_data.has_intersection)
             {
-                
-                parser::Vec3i pixel_color = compute_pixel_color(ray, hit_data, scene);  // Red ;
+                parser::Vec3f float_pixel_color = compute_pixel_color(ray, hit_data, scene);  // Red ;
+                parser::Vec3i pixel_color = clamp_color(float_pixel_color);  // Red ;
                 image[(i + j * width) * 3 + 0] = pixel_color.x;
                 image[(i + j * width) * 3 + 1] = pixel_color.y;
                 image[(i + j * width) * 3 + 2] = pixel_color.z;
