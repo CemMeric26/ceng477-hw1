@@ -85,7 +85,6 @@ float determinant(float a, float d, float g,
          + c * (d * h - g * e);
 }
 
-
 // we need surface normal calculator for tirangles and spheres
 parser::Vec3f substract_vec3f(parser::Vec3f v1, parser::Vec3f v2)
 {
@@ -159,11 +158,6 @@ parser::Vec3f triangle_unitnormal_calc(parser::Vec3f& v0, parser::Vec3f& v1, par
     normal = normalize_vec3f(normal);
     return normal;
 }
-
-/* template<typename T>
-T clamp(T value, T min, T max) {
-    return std::max(min, std::min(max, value));
-} */
 
 parser::Vec3i clamp_color(const parser::Vec3f& color) {
     parser::Vec3i clamped_color;
@@ -246,10 +240,8 @@ float dot_product_vec3f(parser::Vec3f v1, parser::Vec3f v2)
     return dot_product;
 }
 
-
 bool backface_of_camera(parser::Vec3f camera_position, parser::Vec3f camera_gaze, parser::Vec3f triangle_normal)
 {
-
     parser::Vec3f camera_to_triangle = substract_vec3f(camera_position, triangle_normal);
     float magnitude_product = (vector_magnitude(camera_to_triangle)*vector_magnitude(triangle_normal));
     float cos_theta = dot_product_vec3f(camera_to_triangle, triangle_normal)/ magnitude_product;
@@ -274,7 +266,6 @@ bool isBackFacing(const parser::Vec3f& camera_position, const parser::Vec3f& tri
     // If the dot product is greater than 0, then the triangle is facing away from the camera
     return dot > 0;
 }
-
 
 Ray generate_ray(parser::Camera& camera, int i, int j)
 {
@@ -301,8 +292,6 @@ Ray generate_ray(parser::Camera& camera, int i, int j)
 
     Ray ray(camera.position, normalize_vec3f(substract_vec3f(s, camera.position)));
     return ray;
-
-
 }
 
 HitData closest_hit(Ray& ray, parser::Scene& scene)
@@ -401,6 +390,12 @@ HitData hit_sphere(Ray& ray, parser::Scene& scene, parser::Sphere& sphere, int u
     // Calculate the two possible values for t (t1 and t2)
     float t1 = (-dot_d_centerO - sqrt(discriminant)) / dot_d_d;
     float t2 = (-dot_d_centerO + sqrt(discriminant)) / dot_d_d;
+
+    // if any ot t's are negative return false
+    if(t1<0 || t2<0)
+    {
+        return {false, SPHERE, unique_id, pos_inf, {}, {}, sphere.material_id} ;  // or whatever is appropriate in your context
+    }
 
     if((t1 > 0 && t2 > 0) || t1 == t2)
     {
@@ -766,8 +761,6 @@ void Main_raytrace_Computer(parser::Scene& scene)
     // parser::Camera camera = scene.cameras[0];
     int camera_size = scene.cameras.size();
     
-    
-
     // we should use thread for comutating the image parallel
     // thread implementation
     const int number_of_cores = std::thread::hardware_concurrency();
@@ -845,24 +838,5 @@ int main(int argc, char* argv[])
         {   0,   0,   0 },  // Black
     };
 
-    /* int width = 640, height = 480;
-    int columnWidth = width / 8;
-
-    unsigned char* image = new unsigned char [width * height * 3];
-
-    int i = 0;
-    for (int y = 0; y < height; ++y)
-    {
-        for (int x = 0; x < width; ++x)
-        {
-            int colIdx = x / columnWidth;
-            image[i++] = BAR_COLOR[colIdx][0];
-            image[i++] = BAR_COLOR[colIdx][1];
-            image[i++] = BAR_COLOR[colIdx][2];
-        }
-    }
-
-    //  You should render as many images as the number of cameras.
-    write_ppm("test.ppm", image, width, height); */
 
 }
