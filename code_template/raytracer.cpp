@@ -9,7 +9,7 @@ typedef unsigned char RGB[3];
 
 
 RGB background_color;
-float pos_inf = std::numeric_limits<float>::infinity();
+float pos_inf = std::numeric_limits<float>::max();
 struct IntersectionResult {
     bool has_intersection;
     parser::Vec3f hit_point;
@@ -185,7 +185,6 @@ parser::Vec3i clamp_color(const parser::Vec3f& color) {
 }
 
 
-
 std::vector<parser::Vec3f> tirangle_normals(parser::Scene& scene)
 {
     std::vector<parser::Vec3f> normals;
@@ -275,33 +274,38 @@ bool isBackFacing(const parser::Vec3f& camera_position, const parser::Vec3f& tri
     return dot > 0;
 }
 
+
 Ray generate_ray(parser::Camera& camera, int i, int j)
 {
-    // right = cross_product(gaze, up)
-    parser::Vec3f right = cross_product_vec3f(camera.gaze, camera.up);
-    // imagePlaneCenter = camera.position + near_distance * gaze
-    parser::Vec3f imagePlaneCenter = add_vec3f(camera.position, scalar_multiply_vec3f(camera.gaze, camera.near_distance));
+    parser::Vec3f m, q, u, v, s;
+    float left_side = camera.near_plane.x;
+    float right_side = camera.near_plane.y;
+    float bottom_side = camera.near_plane.z;
+    float top_side = camera.near_plane.w;
 
-    // pixelPosition = imagePlaneCenter + (i + 0.5) * pixelWidth * right - (j + 0.5) * pixelHeight * up
-    float pixelWidth = (camera.near_plane.x - camera.near_plane.y) / camera.image_width;
-    float pixelHeight = (camera.near_plane.w - camera.near_plane.z) / camera.image_height;
+    float s_u = (i+0.5) * (right_side - left_side) / camera.image_width;
+    float s_v = (j+0.5) * (top_side - bottom_side) / camera.image_height;
 
-    parser::Vec3f pixelPosition = add_vec3f(
-    add_vec3f(
-        imagePlaneCenter,
-        scalar_multiply_vec3f(right, (camera.image_width / 2.0) * pixelWidth - (i + 0.5) * pixelWidth)
-    ),
-    scalar_multiply_vec3f(camera.up, (camera.image_height / 2.0) * pixelHeight - (j + 0.5) * pixelHeight)
-);
+    m = add_vec3f(camera.position, scalar_multiply_vec3f(camera.gaze, camera.near_distance));
 
-    // ray_direction = normalize(pixelPosition - camera.position)
-    parser::Vec3f ray_direction = normalize_vec3f(substract_vec3f(pixelPosition, camera.position));
+    u = cross_product_vec3f(camera.gaze, camera.up);
+    u = normalize_vec3f(u);
+    v = cross_product_vec3f(u, camera.gaze);
 
-    Ray ray(camera.position, ray_direction);
+    q = add_vec3f(m, scalar_multiply_vec3f(u, left_side));
+    q = add_vec3f(q, scalar_multiply_vec3f(v, top_side));
+
+    s = add_vec3f(q, scalar_multiply_vec3f(u, s_u));
+    s = add_vec3f(s, scalar_multiply_vec3f(v, -s_v)); // carefull here
+
+    Ray ray(camera.position, normalize_vec3f(substract_vec3f(s, camera.position)));
     return ray;
+
+
 }
 
-// we should calculate the closes hit of the ray with the scene
+
+
 HitData closest_hit(Ray& ray, parser::Scene& scene)
 {
     // for each object in the scene
@@ -361,7 +365,7 @@ HitData closest_hit(Ray& ray, parser::Scene& scene)
 
     return closest_hit_data;
 
-}
+} 
 
 HitData hit_sphere(Ray& ray, parser::Scene& scene, parser::Sphere& sphere, int unique_id)
 {
@@ -412,7 +416,6 @@ HitData hit_sphere(Ray& ray, parser::Scene& scene, parser::Sphere& sphere, int u
     return {true, SPHERE, unique_id, hit_t, hit_point, sphere_normal, sphere.material_id};
 
 }
-
 
 HitData hit_triangle(Ray& ray, parser::Scene& scene, parser::Triangle& triangle, int unique_id, parser::Vec3f triangle_normal)
 {
@@ -506,11 +509,13 @@ HitData hit_mesh(Ray& ray, parser::Scene& scene, parser::Mesh& mesh, int mesh_in
         {
             hit_t = hit_data.t;
             closest_hit = hit_data;
+            unique_id = i;
         }
     }
     if(hit_t < pos_inf) // if there is a hit
     {
         closest_hit.type = MESH;  // only obj type is changed
+        closest_hit.id = unique_id;
         return closest_hit;
     }
 
@@ -518,8 +523,7 @@ HitData hit_mesh(Ray& ray, parser::Scene& scene, parser::Mesh& mesh, int mesh_in
     return hit_data;
 }
 
-
-bool shadowray_obj_intersect(Ray& ray, parser::Scene& scene)
+bool shadowray_obj_intersect(Ray& ray, parser::Scene& scene, parser::Vec3f light_position )
 {
     // for each object in the scene
     int size_of_triangles = scene.triangles.size();
@@ -535,68 +539,51 @@ bool shadowray_obj_intersect(Ray& ray, parser::Scene& scene)
         // no need to implement backface culling for shadow rays
         
         HitData hit_data = hit_triangle(ray, scene, triangle, i, triangle_normal);
+
+        // loook at if hit point behind the light source
+        float origin_to_light = vector_magnitude(substract_vec3f(light_position, ray.origin)); // l-s
+        float origin_to_intersect = vector_magnitude(substract_vec3f(hit_data.hit_point, ray.origin )); // o-s
+
+        if(hit_data.has_intersection && hit_data.t >= 0 && origin_to_light > origin_to_intersect )
+        {
+            return true;
+        }
         
-        if(hit_data.has_intersection)
-        {
-            return true;
-        }
     }
-    // for each sphere
-    for(int j=0; j<size_of_spheres; j++)
-    {
-        parser::Sphere sphere = scene.spheres[j];
-        HitData hit_data = hit_sphere(ray, scene, sphere, j);
-        if(hit_data.has_intersection)
-        {
-            return true;
-        }
-    }
-    // for each mesh
+     // for each mesh
     for(int k=0; k<size_of_meshes; k++)
     {
         parser::Mesh mesh = scene.meshes[k];
         // no need to implement backface culling for shadow rays
         HitData hit_data = hit_mesh(ray, scene, mesh, k);
-        if(hit_data.has_intersection)
+
+        // loook at if hit point behind the light source
+        float origin_to_light = vector_magnitude(substract_vec3f(light_position, ray.origin)); // l-s
+        float origin_to_intersect = vector_magnitude(substract_vec3f(hit_data.hit_point, ray.origin )); // obj-s
+
+        if(hit_data.has_intersection && hit_data.t >= 0 && origin_to_light > origin_to_intersect)
         {
             return true;
         }
     }
 
+    // for each sphere
+    for(int j=0; j<size_of_spheres; j++)
+    {
+        parser::Sphere sphere = scene.spheres[j];
+        HitData hit_data = hit_sphere(ray, scene, sphere, j);
+
+        // loook at if hit point behind the light source
+        float origin_to_light = vector_magnitude(substract_vec3f(light_position, ray.origin)); // l-s
+        float origin_to_intersect = vector_magnitude(substract_vec3f(hit_data.hit_point, ray.origin )); // o-s
+
+        if(hit_data.has_intersection && hit_data.t >= 0 && origin_to_light > origin_to_intersect)
+        {
+            return true;
+        }
+    }
+   
     return false;
-}
-
-parser::Vec3f compute_pixel_color(Ray& ray, HitData& hit_data, parser::Scene& scene)
-{
-    if(ray.reflection_depth > scene.max_recursion_depth)
-    {
-        return {0,0,0};
-    }
-
-    if(hit_data.has_intersection)
-    {
-        // find the color at the closest hit
-
-        /* parser::Vec3f shaded_color = apply_shading_to_pixel(scene, hit_data, ray);
-
-
-        return clamp_color(shaded_color); */
-        return apply_shading_to_pixel(scene, hit_data, ray);
-
-    }
-    else if (ray.reflection_depth == 0)
-    {
-        parser::Vec3f background_color;
-        background_color.x = scene.background_color.x;
-        background_color.y = scene.background_color.y;
-        background_color.z = scene.background_color.z;
-        return background_color;
-    }
-    else
-    {
-        return {0,0,0};
-    }
-
 }
 
 parser::Vec3f diffuse_light_calc(parser::Vec3f& normalized_shadow_ray_direction, parser::Vec3f& k_d, parser::Vec3f& hit_normal, float distance_sqr, parser::Vec3f& light_intensity)
@@ -640,32 +627,72 @@ parser::Vec3f reflection_vector_calc(parser::Vec3f& incoming_ray_direction, pars
     return reflection_vector;
 }
 
+parser::Vec3f compute_pixel_color(Ray& ray, parser::Scene& scene)
+{
+
+    if(ray.reflection_depth > scene.max_recursion_depth)
+    {
+        return {0,0,0};
+    }
+    HitData hit_data = closest_hit(ray, scene);
+    if(hit_data.has_intersection)
+    {
+        // find the color at the closest hit point
+        return apply_shading_to_pixel(scene, hit_data, ray);
+    }
+
+    else if (ray.reflection_depth == 0)
+    {
+        // no intersection for the primary ray
+        parser::Vec3f background_color;
+        background_color.x = scene.background_color.x;
+        background_color.y = scene.background_color.y;
+        background_color.z = scene.background_color.z;
+        return background_color;
+    }
+    else
+    {
+        // avoid repeated addition of the background color for reflected rays
+        return {0,0,0};
+    }
+
+}
+
 parser::Vec3f apply_shading_to_pixel(parser::Scene& scene, HitData& hit_data, Ray& ray)
 {
-    parser::Vec3f color = scene.materials[hit_data.material_id].ambient; // we started adding with ambient light
-
-
-    // for mirror reflection
-    if(scene.materials[hit_data.material_id].mirror.x != 0 || scene.materials[hit_data.material_id].mirror.y != 0 || scene.materials[hit_data.material_id].mirror.z != 0)
+    // changing to material_id-1
+    parser::Vec3f color ; // we started adding with ambient light
+    color.x = scene.ambient_light.x * scene.materials[hit_data.material_id-1].ambient.x;
+    color.y = scene.ambient_light.y * scene.materials[hit_data.material_id-1].ambient.y;
+    color.z = scene.ambient_light.z * scene.materials[hit_data.material_id-1].ambient.z;
+    
+    
+    // if mirror object
+    if(scene.materials[hit_data.material_id-1].is_mirror)
     {
-        // reflection ray is generated
+        // r vector is calculated
         parser::Vec3f reflection_ray_direction = reflection_vector_calc(ray.direction, hit_data.normal);
-        Ray reflection_ray(hit_data.hit_point, reflection_ray_direction);
-        HitData reflection_hit_data = closest_hit(reflection_ray, scene);
+
+        // should i do this ??
+        reflection_ray_direction = normalize_vec3f(reflection_ray_direction);
+
+        // reflection ray is generated
+        Ray reflection_ray(add_vec3f( hit_data.hit_point, scalar_multiply_vec3f(hit_data.normal, scene.shadow_ray_epsilon)) , reflection_ray_direction);
+
+        // HitData reflection_hit_data = closest_hit(reflection_ray, scene);
+
         reflection_ray.reflection_depth = ray.reflection_depth + 1;
 
-        if(reflection_hit_data.has_intersection)
-        {
-            parser::Vec3f reflection_color = compute_pixel_color(reflection_ray, reflection_hit_data, scene);
-            color.x += reflection_color.x;
-            color.y += reflection_color.y;
-            color.z += reflection_color.z;
-        }
+        parser::Vec3f reflection_color = compute_pixel_color(reflection_ray, scene);
+        color.x += reflection_color.x * scene.materials[hit_data.material_id-1].mirror.x;
+        color.y += reflection_color.y * scene.materials[hit_data.material_id-1].mirror.y;
+        color.z += reflection_color.z * scene.materials[hit_data.material_id-1].mirror.z;
     }
+    
 
     // for each point light
     int size_of_point_lights = scene.point_lights.size();
-    // std::cout << "size of point lights: " << size_of_point_lights << std::endl;
+
     for(int i=0; i<size_of_point_lights; i++)
     {
         parser::PointLight point_light = scene.point_lights[i];
@@ -675,44 +702,46 @@ parser::Vec3f apply_shading_to_pixel(parser::Scene& scene, HitData& hit_data, Ra
         // shadow ray is generated
         parser::Vec3f shadow_ray_direction = substract_vec3f(light_position, hit_data.hit_point); // light_position - hit_point
         
-
         parser::Vec3f normalized_shadow_ray_direction = normalize_vec3f(shadow_ray_direction);
-        parser::Vec3f epsilon_ray = scalar_multiply_vec3f(normalized_shadow_ray_direction, scene.shadow_ray_epsilon); // shadow_ray_direction * epsilon
 
-        Ray shadow_ray(add_vec3f(hit_data.hit_point, epsilon_ray), shadow_ray_direction); // hit_point + epsilon_ray =origin, shadow_ray_direction = direction
+        
+        // parser::Vec3f epsilon_ray = scalar_multiply_vec3f(normalized_shadow_ray_direction, scene.shadow_ray_epsilon); // shadow_ray_direction * epsilon
+        parser::Vec3f epsilon_ray = scalar_multiply_vec3f(hit_data.normal, scene.shadow_ray_epsilon); // shadow_ray_direction * epsilon
+
+        Ray shadow_ray(add_vec3f(hit_data.hit_point, epsilon_ray), normalized_shadow_ray_direction); // hit_point + epsilon_ray =origin, normalized_shadow_ray_direction = direction
 
 
-        bool shadow_ray_hit= shadowray_obj_intersect(shadow_ray, scene);
+        bool shadow_ray_hit= shadowray_obj_intersect(shadow_ray, scene, light_position);
 
         // if there is no intersection
+        // not or not not
         if(!shadow_ray_hit)
         {
-
             float distance_sqr = dot_product_vec3f(shadow_ray_direction,shadow_ray_direction); // distance = shadow_ray_direction * shadow_ray_direction
             // diffuse light is calculated 
-            parser::Vec3f diffuse_light = diffuse_light_calc(normalized_shadow_ray_direction, scene.materials[hit_data.material_id].diffuse, hit_data.normal, distance_sqr, light_intensity);
+            parser::Vec3f diffuse_light = diffuse_light_calc(normalized_shadow_ray_direction, scene.materials[hit_data.material_id-1].diffuse, hit_data.normal, distance_sqr, light_intensity);
             
             // specular light is calculated
-            parser::Vec3f specular_light = specular_light_calc(normalized_shadow_ray_direction, scene.materials[hit_data.material_id].specular, hit_data.normal, distance_sqr, light_intensity, ray.direction, scene.materials[hit_data.material_id].phong_exponent);
+            parser::Vec3f specular_light = specular_light_calc(normalized_shadow_ray_direction, scene.materials[hit_data.material_id-1].specular, hit_data.normal, distance_sqr, light_intensity, ray.direction, scene.materials[hit_data.material_id-1].phong_exponent);
             
-            // color = add_vec3f(color, diffuse_light); 
-            
-            color.x += diffuse_light.x;
-            color.y += diffuse_light.y;
-            color.z += diffuse_light.z;
-
-
-            // specular light is added to the color
-            // color = add_vec3f(color, specular_light); // and here
+            color.x += diffuse_light.x + specular_light.x;
+            color.y += diffuse_light.y + specular_light.y;
+            color.z += diffuse_light.z + specular_light.z; 
 
         }
     }
 
-    // color = {255,0,0};
-
     return color;
 
+}
 
+parser::Vec3i compute_color(Ray& ray, parser::Scene& scene)
+{
+
+    parser::Vec3f float_pixel_color = compute_pixel_color(ray, scene);  // Red ;
+
+    parser::Vec3i pixel_color = clamp_color(float_pixel_color); 
+    return pixel_color;
 }
 
 void Main_raytrace_Computer(parser::Scene& scene)
@@ -729,27 +758,17 @@ void Main_raytrace_Computer(parser::Scene& scene)
         {
             // ray is generated
             Ray ray = generate_ray(camera, i, j);
-            // closest hit is calculated
-            HitData hit_data = closest_hit(ray, scene);
 
-            if(hit_data.has_intersection)
-            {
-                parser::Vec3f float_pixel_color = compute_pixel_color(ray, hit_data, scene);  // Red ;
-                parser::Vec3i pixel_color = clamp_color(float_pixel_color);  // Red ;
-                image[(i + j * width) * 3 + 0] = pixel_color.x;
-                image[(i + j * width) * 3 + 1] = pixel_color.y;
-                image[(i + j * width) * 3 + 2] = pixel_color.z;
-            }
-            else
-            {
-                image[(i + j * width) * 3 + 0] = scene.background_color.x;
-                image[(i + j * width) * 3 + 1] = scene.background_color.y;
-                image[(i + j * width) * 3 + 2] = scene.background_color.z;
-            }
+            parser::Vec3i pixel_color =  compute_color(ray, scene);
+            image[(i + j * width) * 3 + 0] = pixel_color.x;
+            image[(i + j * width) * 3 + 1] = pixel_color.y;
+            image[(i + j * width) * 3 + 2] = pixel_color.z;
+
         }
     }
 
     write_ppm("test.ppm", image, width, height);
+    // image = nullptr;
       
 }
 
