@@ -714,6 +714,7 @@ parser::Vec3f apply_shading_to_pixel(parser::Scene& scene, HitData& hit_data, Ra
 
         // if there is no intersection
         // not or not not
+        // 
         if(!shadow_ray_hit)
         {
             float distance_sqr = dot_product_vec3f(shadow_ray_direction,shadow_ray_direction); // distance = shadow_ray_direction * shadow_ray_direction
@@ -762,43 +763,51 @@ void Child_raytrace_Computer(parser::Camera& camera, parser::Scene& scene, unsig
 
 void Main_raytrace_Computer(parser::Scene& scene)
 {
-    parser::Camera camera = scene.cameras[0];
-    int width = camera.image_width;
-    int height = camera.image_height;
-    unsigned char* image = new unsigned char [width * height * 3];
+    // parser::Camera camera = scene.cameras[0];
+    int camera_size = scene.cameras.size();
+    
+    
 
     // we should use thread for comutating the image parallel
     // thread implementation
     const int number_of_cores = std::thread::hardware_concurrency();
 
-    if(number_of_cores == 0 || height < number_of_cores)
+    for(int x=0; x < camera_size; x++)
     {
-        Child_raytrace_Computer(camera, scene, image, 0, height, width);
-       
-    }
-    else
-    {
-        std::thread* threads = new std::thread[number_of_cores];
-        int height_increase = height / number_of_cores;
+        parser::Camera camera = scene.cameras[x];       
+        int width = camera.image_width;
+        int height = camera.image_height;
+        unsigned char* image = new unsigned char [width * height * 3];
 
-        for(int i=0; i < number_of_cores; i++)
+        if(number_of_cores == 0 || height < number_of_cores)
         {
-            int min_height = i * height_increase;
-            int max_height = (i== number_of_cores-1) ? height : (i+1) * height_increase;
-            threads[i] = std::thread(&Child_raytrace_Computer, std::ref(camera), std::ref(scene), image, min_height, max_height, width);
+            Child_raytrace_Computer(camera, scene, image, 0, height, width);
         
-           
         }
-        for(int i=0; i < number_of_cores; i++)
+        else
         {
-            threads[i].join();
-        }
-        delete[] threads;
-    }
+            std::thread* threads = new std::thread[number_of_cores];
+            int height_increase = height / number_of_cores;
 
-    write_ppm("test.ppm", image, width, height);
-    // image = nullptr;
-      
+            for(int i=0; i < number_of_cores; i++)
+            {
+                int min_height = i * height_increase;
+                int max_height = (i== number_of_cores-1) ? height : (i+1) * height_increase;
+                threads[i] = std::thread(&Child_raytrace_Computer, std::ref(camera), std::ref(scene), image, min_height, max_height, width);
+            
+            
+            }
+            for(int i=0; i < number_of_cores; i++)
+            {
+                threads[i].join();
+            }
+            delete[] threads;
+        }
+        const char* image_name = camera.image_name.c_str();
+        write_ppm(image_name, image, width, height);
+
+    }
+   
 }
 
 
