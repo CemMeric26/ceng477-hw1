@@ -2,6 +2,7 @@
 #include <limits>
 #include <cmath>
 #include <algorithm>
+#include <thread>  
 #include "parser.h"
 #include "ppm.h"
 
@@ -303,8 +304,6 @@ Ray generate_ray(parser::Camera& camera, int i, int j)
 
 
 }
-
-
 
 HitData closest_hit(Ray& ray, parser::Scene& scene)
 {
@@ -744,6 +743,23 @@ parser::Vec3i compute_color(Ray& ray, parser::Scene& scene)
     return pixel_color;
 }
 
+void Child_raytrace_Computer(parser::Camera& camera, parser::Scene& scene, unsigned char* image ,int min_height, int max_height, const int width)
+{
+    for(int j=min_height; j < max_height; j++)
+    {
+        for(int i=0; i < width; i++)
+        {
+            Ray ray = generate_ray(camera, i, j);
+            parser::Vec3i pixel_color = compute_color(ray, scene);
+            int index = (j * width + i) * 3;
+            image[index] = pixel_color.x;
+            image[index + 1] = pixel_color.y;
+            image[index + 2] = pixel_color.z;
+        }
+    }
+
+}
+
 void Main_raytrace_Computer(parser::Scene& scene)
 {
     parser::Camera camera = scene.cameras[0];
@@ -751,20 +767,33 @@ void Main_raytrace_Computer(parser::Scene& scene)
     int height = camera.image_height;
     unsigned char* image = new unsigned char [width * height * 3];
 
-    // for each pixel
-    for(int i=0; i<width; i++)
+    // we should use thread for comutating the image parallel
+    // thread implementation
+    const int number_of_cores = std::thread::hardware_concurrency();
+
+    if(number_of_cores == 0 || height < number_of_cores)
     {
-        for(int j=0; j<height; j++)
+        Child_raytrace_Computer(camera, scene, image, 0, height, width);
+       
+    }
+    else
+    {
+        std::thread* threads = new std::thread[number_of_cores];
+        int height_increase = height / number_of_cores;
+
+        for(int i=0; i < number_of_cores; i++)
         {
-            // ray is generated
-            Ray ray = generate_ray(camera, i, j);
-
-            parser::Vec3i pixel_color =  compute_color(ray, scene);
-            image[(i + j * width) * 3 + 0] = pixel_color.x;
-            image[(i + j * width) * 3 + 1] = pixel_color.y;
-            image[(i + j * width) * 3 + 2] = pixel_color.z;
-
+            int min_height = i * height_increase;
+            int max_height = (i== number_of_cores-1) ? height : (i+1) * height_increase;
+            threads[i] = std::thread(&Child_raytrace_Computer, std::ref(camera), std::ref(scene), image, min_height, max_height, width);
+        
+           
         }
+        for(int i=0; i < number_of_cores; i++)
+        {
+            threads[i].join();
+        }
+        delete[] threads;
     }
 
     write_ppm("test.ppm", image, width, height);
@@ -773,11 +802,6 @@ void Main_raytrace_Computer(parser::Scene& scene)
 }
 
 
-
-void Child_raytrace_Computer()
-{
-    ;
-}
 
 int main(int argc, char* argv[])
 {
